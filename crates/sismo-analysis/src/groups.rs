@@ -174,6 +174,27 @@ impl Groups {
         );
     }
 
+    /// Counts the crates the app declared as its own as app time, ahead
+    /// of the framework defaults.
+    pub fn add_app_crates(&mut self, patterns: &[String]) {
+        for pattern in patterns.iter().rev() {
+            let pattern = pattern.replace('-', "_");
+            if !self
+                .rules
+                .iter()
+                .any(|r| r.pattern == pattern && r.group == Group::App)
+            {
+                self.rules.insert(
+                    0,
+                    Rule {
+                        pattern,
+                        group: Group::App,
+                    },
+                );
+            }
+        }
+    }
+
     #[must_use]
     pub fn classify(&self, krate: &str) -> Group {
         let krate = krate.replace('-', "_");

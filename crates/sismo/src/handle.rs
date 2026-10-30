@@ -113,6 +113,7 @@ fn start(config: Config) -> Result<Handle, InstallError> {
         pid: std::process::id(),
         started_unix_ns: started.saturating_sub(crate::registry::now()),
         sismo_version: env!("CARGO_PKG_VERSION").to_owned(),
+        app_crates: config.app_crates,
     });
 
     let (sender, receiver) = mpsc::sync_channel(config.queue_batches.max(16));

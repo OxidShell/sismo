@@ -364,7 +364,7 @@ fn groups(mut ws: State<Workspace>) -> Element {
                             .iter_mut()
                             .filter(|v| v.session.info.app == forget)
                         {
-                            view.session.groups = groups.clone();
+                            view.session.set_groups(groups.clone());
                             view.revision += 1;
                         }
                     },

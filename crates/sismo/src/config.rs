@@ -56,6 +56,7 @@ pub struct Config {
     pub(crate) capture_panics: bool,
     pub(crate) capture_stdio: bool,
     pub(crate) queue_batches: usize,
+    pub(crate) app_crates: Vec<String>,
 }
 
 /// Default flight recorder size.
@@ -79,6 +80,7 @@ impl Config {
             capture_panics: true,
             capture_stdio: false,
             queue_batches: 4096,
+            app_crates: Vec::new(),
         }
     }
 
@@ -86,6 +88,20 @@ impl Config {
     #[must_use]
     pub fn build(mut self, build: impl Into<String>) -> Self {
         self.build = build.into();
+        self
+    }
+
+    /// Crates that belong to the app besides its own package, as exact
+    /// names or `prefix*` patterns (e.g. workspace members). Viewers count
+    /// them as app time instead of framework or other.
+    #[must_use]
+    pub fn app_crates<I, S>(mut self, patterns: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.app_crates
+            .extend(patterns.into_iter().map(|p| p.into().replace('-', "_")));
         self
     }
 

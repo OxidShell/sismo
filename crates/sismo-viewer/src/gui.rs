@@ -154,7 +154,8 @@ impl Workspace {
             Ok(mut view) => {
                 self.next_id += 1;
                 self.prefs.push_recent(path);
-                view.session.groups = self.prefs.groups_for(&view.session.info.app);
+                view.session
+                    .set_groups(self.prefs.groups_for(&view.session.info.app));
                 view.groups_applied = true;
                 self.sessions.push(view);
                 self.active = Some(self.sessions.len() - 1);
@@ -260,7 +261,9 @@ impl Workspace {
                 saved.push(done);
             }
             if !session.groups_applied && !session.session.info.app.is_empty() {
-                session.session.groups = self.prefs.groups_for(&session.session.info.app);
+                session
+                    .session
+                    .set_groups(self.prefs.groups_for(&session.session.info.app));
                 session.groups_applied = true;
                 session.revision += 1;
             }

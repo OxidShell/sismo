@@ -294,6 +294,7 @@ impl Session {
                 Record::Session(info) => {
                     if self.info.session_id == 0 || self.info.session_id == info.session_id {
                         self.groups.set_app(&info.app);
+                        self.groups.add_app_crates(&info.app_crates);
                         self.info = info;
                     }
                 }
@@ -500,6 +501,13 @@ impl Session {
     #[must_use]
     pub fn unix_ns(&self, t: u64) -> u64 {
         self.info.started_unix_ns.saturating_add(t)
+    }
+
+    /// Replaces the crate groups, keeping the crates the app declared as
+    /// its own.
+    pub fn set_groups(&mut self, mut groups: Groups) {
+        groups.add_app_crates(&self.info.app_crates);
+        self.groups = groups;
     }
 
     /// The app, thread and callsite records known so far, enough for a

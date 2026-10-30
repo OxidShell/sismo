@@ -106,7 +106,7 @@ impl Component for GroupsDialog {
                 .iter_mut()
                 .filter(|v| v.session.info.app == save_app)
             {
-                view.session.groups = groups.clone();
+                view.session.set_groups(groups.clone());
                 view.revision += 1;
             }
             w.dialog = None;

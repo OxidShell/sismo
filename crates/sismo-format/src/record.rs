@@ -148,9 +148,35 @@ pub struct SessionInfo {
     /// Wall-clock time of timestamp zero, in nanoseconds since the Unix epoch.
     pub started_unix_ns: u64,
     pub sismo_version: String,
+    /// Crate patterns (`name` or `prefix*`) the app counts as its own.
+    pub app_crates: Vec<String>,
 }
 
 impl SessionInfo {
+    /// Reads the fields after a session tag; `crates` says whether the
+    /// app's crate patterns follow (older recordings do not carry them).
+    fn decode(dec: &mut Decoder<'_>, crates: bool) -> Result<Self, DecodeError> {
+        let mut info = SessionInfo {
+            session_id: dec.uvar()?,
+            app: dec.string()?,
+            app_version: dec.string()?,
+            build: dec.string()?,
+            platform: dec.string()?,
+            device: dec.string()?,
+            pid: dec.u32var()?,
+            started_unix_ns: dec.uvar()?,
+            sismo_version: dec.string()?,
+            app_crates: Vec::new(),
+        };
+        if crates {
+            let count = dec.uvar()?;
+            for _ in 0..count {
+                info.app_crates.push(dec.string()?);
+            }
+        }
+        Ok(info)
+    }
+
     /// File name stem `<app>-<version>-<platform>-<device>-<stamp>`, so
     /// recordings of several apps and devices sort and never collide.
     #[must_use]
@@ -301,6 +327,8 @@ mod tag {
     pub const THREAD: u8 = 2;
     pub const CALLSITE: u8 = 3;
     pub const BATCH: u8 = 4;
+    /// [`SESSION`] followed by the app's own crate patterns.
+    pub const SESSION_CRATES: u8 = 5;
 
     pub const BEGIN: u8 = 1;
     pub const END: u8 = 2;
@@ -329,7 +357,7 @@ impl Record {
     pub fn encode(&self, enc: &mut Encoder) {
         match self {
             Record::Session(s) => {
-                enc.u8(tag::SESSION)
+                enc.u8(tag::SESSION_CRATES)
                     .uvar(s.session_id)
                     .str(&s.app)
                     .str(&s.app_version)
@@ -338,7 +366,11 @@ impl Record {
                     .str(&s.device)
                     .uvar(u64::from(s.pid))
                     .uvar(s.started_unix_ns)
-                    .str(&s.sismo_version);
+                    .str(&s.sismo_version)
+                    .uvar(s.app_crates.len() as u64);
+                for pattern in &s.app_crates {
+                    enc.str(pattern);
+                }
             }
             Record::Thread(t) => {
                 enc.u8(tag::THREAD).uvar(u64::from(t.id)).str(&t.name);
@@ -368,17 +400,8 @@ impl Record {
     /// Any [`DecodeError`] for malformed input.
     pub fn decode(dec: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         match dec.u8()? {
-            tag::SESSION => Ok(Record::Session(SessionInfo {
-                session_id: dec.uvar()?,
-                app: dec.string()?,
-                app_version: dec.string()?,
-                build: dec.string()?,
-                platform: dec.string()?,
-                device: dec.string()?,
-                pid: dec.u32var()?,
-                started_unix_ns: dec.uvar()?,
-                sismo_version: dec.string()?,
-            })),
+            tag::SESSION => Ok(Record::Session(SessionInfo::decode(dec, false)?)),
+            tag::SESSION_CRATES => Ok(Record::Session(SessionInfo::decode(dec, true)?)),
             tag::THREAD => Ok(Record::Thread(ThreadDef {
                 id: dec.u32var()?,
                 name: dec.string()?,
@@ -674,6 +697,7 @@ mod tests {
                 pid: 7,
                 started_unix_ns: 1_700_000_000_000_000_000,
                 sismo_version: "0.1.0".into(),
+                app_crates: vec!["demo_*".into()],
             }),
             Record::Thread(ThreadDef {
                 id: 1,
