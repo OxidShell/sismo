@@ -243,13 +243,15 @@ impl Component for QueryBar {
             }
         };
         let choices = list.clone();
+        let has_text = !text_state.read().is_empty();
+        let mut clear = commit;
         let input = Input::new(WritableSetter::new(text_state, move |v: String| {
             selected.set(0);
             commit(v);
         }))
         .a11y_id(a11y)
         .flat()
-        .width(Size::px(560.))
+        .width(Size::px(if has_text { 528. } else { 558. }))
         .placeholder(tr!("query-placeholder"))
         .on_pre_key_down(move |e: Event<KeyboardEventData>| match &e.key {
             Key::Named(NamedKey::ArrowDown) => {
@@ -363,10 +365,26 @@ impl Component for QueryBar {
                     } else {
                         theme::LINE2
                     }))
-                    .center()
+                    .horizontal()
+                    .content(Content::flex())
+                    .cross_align(Alignment::Center)
                     .font_family(theme::MONO)
                     .font_size(12.)
-                    .child(input),
+                    .child(input)
+                    .maybe(has_text, |r| {
+                        r.child(
+                            rect()
+                                .width(Size::px(30.))
+                                .height(Size::fill())
+                                .center()
+                                .cursor(CursorIcon::Pointer)
+                                .on_press(move |_| {
+                                    selected.set(0);
+                                    clear(String::new());
+                                })
+                                .child(text("×", 15., theme::TEXT2)),
+                        )
+                    }),
             )
             .maybe_child(error.filter(|_| focused).map(|e| {
                 rect()

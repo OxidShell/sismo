@@ -342,9 +342,13 @@ fn handle_shortcut(mut ws: State<Workspace>, event: &KeyboardEventData) {
             if w.dialog.take().is_none()
                 && let Some(view) = w.active_mut()
             {
-                view.selection = None;
-                view.selected_span = None;
-                view.flame_focus.clear();
+                if view.tab == Tab::Flamegraph && !view.flame_focus.is_empty() {
+                    view.flame_focus.pop();
+                } else {
+                    view.selection = None;
+                    view.selected_span = None;
+                    view.flame_focus.clear();
+                }
                 view.revision += 1;
             }
         }
@@ -592,7 +596,12 @@ mod live_snapshot {
         for tab in [Tab::Timeline, Tab::Logs] {
             let (mut runner, ()) = TestingRunner::new(
                 super::app,
-                (1440., 900.).into(),
+                if tab == Tab::Logs {
+                    (1440., 420.)
+                } else {
+                    (1440., 900.)
+                }
+                .into(),
                 move |r| {
                     r.provide_root_context(move || Some(addr));
                     r.provide_root_context(|| None::<PathBuf>);
@@ -612,6 +621,12 @@ mod live_snapshot {
                 "sismo-live-{}.png",
                 tab.label().trim_start_matches("tab-")
             )));
+            if tab == Tab::Logs {
+                // Scrolling up by hand stops following the newest line.
+                runner.scroll((700., 300.), (0., 400.));
+                runner.poll(Duration::from_millis(100), Duration::from_secs(2));
+                runner.render_to_file(dir.join("sismo-live-logs-scrolled.png"));
+            }
         }
     }
 }

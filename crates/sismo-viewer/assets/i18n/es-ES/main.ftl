@@ -136,7 +136,9 @@ flame-window-selection = selección
 flame-window-session = toda la sesión
 flame-icicle = Icicle
 flame-aggregate = agregado · { $window } · { $threads } hilos
-flame-hint = clic = enfocar · Esc = volver a la raíz
+flame-hint = ancho = parte del tiempo · clic = acercar · clic en la barra de arriba o en vacío = alejar · clic derecho = menú
+flame-root = Todo
+flame-up = Subir un nivel  Esc
 
 ## Métricas
 metrics-frame-time = Frame time

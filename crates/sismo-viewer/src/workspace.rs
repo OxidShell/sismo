@@ -155,6 +155,8 @@ pub struct SessionView {
     pub flame_focus: Vec<u32>,
     pub paused: bool,
     pub follow: bool,
+    /// Whether the logs list stays at its newest line.
+    pub logs_follow: bool,
     /// Bumped whenever data or view changes; the UI keys repaints on it.
     pub revision: u64,
     /// Last measured size of named canvases, for hit testing.
@@ -195,6 +197,7 @@ impl SessionView {
             flame_focus: Vec::new(),
             paused: false,
             follow: true,
+            logs_follow: true,
             revision: 0,
             canvas: std::collections::HashMap::new(),
             sort: sismo_analysis::SortBy::SelfTime,
@@ -294,6 +297,7 @@ impl SessionView {
         let (start, end) = self.session.span();
         if self.live().is_some() {
             self.follow = true;
+            self.logs_follow = true;
             self.paused = false;
             self.view = (
                 end.saturating_sub(self.live_window_ns).max(start),

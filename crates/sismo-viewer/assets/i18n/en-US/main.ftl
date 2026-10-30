@@ -136,7 +136,9 @@ flame-window-selection = selection
 flame-window-session = whole session
 flame-icicle = Icicle
 flame-aggregate = aggregated · { $window } · { $threads } threads
-flame-hint = click = focus · Esc = back to root
+flame-hint = width = share of time · click = zoom in · click the top bar or empty space = zoom out · right click = menu
+flame-root = All
+flame-up = Up one level  Esc
 
 ## Metrics
 metrics-frame-time = Frame time

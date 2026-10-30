@@ -3,17 +3,18 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use freya::prelude::*;
 use sismo_analysis::units::{Nanos, Percent};
-use sismo_analysis::{FlameNode, Group, Session};
+use sismo_analysis::{FlameNode, Group, GroupSplit, Session};
 
 use super::Workspace;
 use super::draw::Scene;
 use super::i18n::tr;
 use super::theme;
 use super::timeline::scene;
-use super::widgets::{Kind, button, caption, hline, mono, swatch, text, vline};
+use super::widgets::{Kind, button, caption, hline, mono, swatch, text, tool, vline};
 use crate::workspace::{SessionView, Tab};
 
 const ROW_H: f32 = 22.;
@@ -334,19 +335,95 @@ fn split_bar(split: sismo_analysis::GroupSplit) -> Rect {
         )
 }
 
+/// Where the zoom is: the root and every focused function, each one a
+/// way back to that level, plus a button to go up one.
+fn breadcrumbs(mut ws: State<Workspace>, session: &Session, focus: &[u32]) -> Rect {
+    let set = move |path: Vec<u32>| {
+        move |_| {
+            if let Some(v) = ws.write().active_mut() {
+                v.selected_function = path.last().copied();
+                v.flame_focus.clone_from(&path);
+                v.revision += 1;
+            }
+        }
+    };
+    let mut up = focus.to_vec();
+    up.pop();
+    rect()
+        .width(Size::fill())
+        .horizontal()
+        .content(Content::flex())
+        .cross_align(Alignment::Center)
+        .spacing(6.)
+        .padding((0., 16., 8., 16.))
+        .child(tool(tr!("flame-root"), focus.is_empty(), set(Vec::new())))
+        .children(focus.iter().enumerate().map(|(i, callsite)| {
+            rect()
+                .horizontal()
+                .content(Content::flex())
+                .cross_align(Alignment::Center)
+                .spacing(6.)
+                .child(text("›", 12., theme::TEXT3))
+                .child(tool(
+                    session.name(*callsite),
+                    i + 1 == focus.len(),
+                    set(focus[..=i].to_vec()),
+                ))
+                .into_element()
+        }))
+        .child(rect().width(Size::flex(1.)))
+        .maybe(!focus.is_empty(), |r| {
+            r.child(tool(tr!("flame-up"), false, set(up)))
+        })
+}
+
+thread_local! {
+    /// Last aggregation, keyed by session, window, events and query text.
+    static FLAME: RefCell<Option<(FlameKey, Aggregate)>> =
+        const { RefCell::new(None) };
+}
+
+type FlameKey = (u64, (u64, u64), u64, String, usize);
+type Aggregate = Rc<(FlameNode, GroupSplit)>;
+
+fn aggregate(view: &SessionView, query: &sismo_analysis::Query) -> Aggregate {
+    let window = view.window();
+    let key = (
+        view.id,
+        window,
+        view.session.events,
+        view.query_text.clone(),
+        view.hidden_crates.len() + view.hidden_threads.len(),
+    );
+    FLAME.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if let Some((cached, value)) = slot.as_ref()
+            && *cached == key
+        {
+            return Rc::clone(value);
+        }
+        let value = Rc::new((
+            view.session.flame(query, None, window),
+            view.session.group_split(query, None, window),
+        ));
+        *slot = Some((key, Rc::clone(&value)));
+        value
+    })
+}
+
 pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
     let session = &view.session;
     let query = view.effective_query();
     let window = view.window();
-    let root = session.flame(&query, None, window);
-    let split = session.group_split(&query, None, window);
+    let aggregated = aggregate(view, &query);
+    let (root, split) = (&aggregated.0, aggregated.1);
     let width = view.canvas.get("flame").map_or(900., |s| s.0);
     #[allow(clippy::cast_precision_loss)]
-    let height = (depth_of(&root) as f32 * ROW_H + 40.).max(200.);
+    let height = (depth_of(root) as f32 * ROW_H + 40.).max(200.);
     let id = view.id;
     let icicle = Icicle {
         session,
-        root: &root,
+        root,
         focus: &view.flame_focus,
         selected: view.selected_function,
     };
@@ -415,6 +492,11 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             let mut w = ws.write();
             let Some(v) = w.active_mut() else { return };
             match hit {
+                // The focused row itself: zoom back out one level.
+                Some(path) if path == v.flame_focus => {
+                    v.flame_focus.pop();
+                    v.selected_function = v.flame_focus.last().copied();
+                }
                 Some(path) => {
                     v.selected_function = path.last().copied();
                     v.flame_focus = path;
@@ -424,9 +506,11 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             v.revision += 1;
         });
 
+    let crumbs = breadcrumbs(ws, session, &view.flame_focus);
+
     let side = view
         .selected_function
-        .map(|callsite| side(ws, session, &root, callsite));
+        .map(|callsite| side(ws, session, root, callsite));
 
     rect()
         .expanded()
@@ -454,6 +538,7 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                 )
                 .child(text(tr!("flame-hint"), 11., theme::TEXT3)),
         )
+        .child(crumbs)
         .child(hline())
         .child(
             rect()

@@ -1,5 +1,8 @@
 //! Logs tab: filtered, highlighted log list with the selected entry's detail.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use freya::prelude::*;
 use sismo_analysis::units::Clock;
 use sismo_analysis::{LogEntry, Query, Session};
@@ -229,7 +232,7 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
     let count = rows.len();
     let total = view.session.logs.len();
     let selected = view.selected_log;
-    let follow = view.follow && view.live().is_some();
+    let follow = view.logs_follow && view.live().is_some();
 
     let level_chips = Level::ALL.iter().map(|level| {
         let level = *level;
@@ -293,7 +296,7 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                     .cursor(CursorIcon::Pointer)
                     .on_press(move |_| {
                         if let Some(v) = ws.write().active_mut() {
-                            v.follow = !v.follow;
+                            v.logs_follow = !v.logs_follow;
                         }
                     })
                     .child(if follow {
@@ -337,6 +340,27 @@ impl Component for LogList {
         use_side_effect_with_deps(&(count, self.follow), move |(_, follow)| {
             if *follow {
                 controller.scroll_to(ScrollPosition::End, Direction::Vertical);
+            }
+        });
+        // Scrolling back by hand means the reader wants to stay there: the
+        // offset grows towards zero (the top) while the row count is the
+        // same, which following alone never does.
+        let current = use_hook(|| Rc::new(Cell::new((0usize, false))));
+        current.set((count, self.follow));
+        let seen = use_hook(|| Rc::new(Cell::new((0usize, i32::MIN))));
+        use_side_effect(move || {
+            #[allow(clippy::cast_possible_truncation)]
+            let y = controller.position().y as i32;
+            let (count, following) = current.get();
+            let (last_count, last_y) = seen.get();
+            seen.set((count, y));
+            if following
+                && last_count == count
+                && last_y != i32::MIN
+                && y > last_y
+                && let Some(v) = ws.write().active_mut()
+            {
+                v.logs_follow = false;
             }
         });
         VirtualScrollView::new_with_data_controlled(
