@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 
 use freya::prelude::*;
 
-use crate::client::{Discovered, Scanner};
+use crate::client::{Discovered, ScanEvent, Scanner};
 use crate::workspace::{Saved, SessionView, Tab};
 use i18n::tr;
 use prefs::Prefs;
@@ -63,9 +63,6 @@ pub enum Dialog {
     Groups,
     ClearSession,
 }
-
-/// An app not heard from in this long is dropped from the list.
-const STALE_AFTER: Duration = Duration::from_secs(12);
 
 /// Transient notice in the bottom-right corner.
 #[derive(Debug, Clone)]
@@ -292,10 +289,6 @@ impl Workspace {
                 .iter()
                 .any(|s| s.live().is_some_and(|l| l.retry.due()))
             || self
-                .discovered
-                .iter()
-                .any(|d| d.seen.elapsed() > STALE_AFTER)
-            || self
                 .toast
                 .as_ref()
                 .is_some_and(|t| t.shown.elapsed() > Duration::from_secs(8))
@@ -305,17 +298,15 @@ impl Workspace {
         if let Some(scanner) = &self.scanner {
             for event in scanner.events.try_iter() {
                 match event {
-                    Ok(found) => {
+                    Ok(ScanEvent::Found(found)) => {
                         self.discovered.retain(|d| d.addr != found.addr);
                         self.discovered.push(found);
                     }
+                    Ok(ScanEvent::Lost(addr)) => self.discovered.retain(|d| d.addr != addr),
                     Err(error) => self.scan_error = Some(error),
                 }
             }
         }
-        // Apps that stopped announcing are gone (the scanner refreshes the
-        // living every few seconds).
-        self.discovered.retain(|d| d.seen.elapsed() <= STALE_AFTER);
         self.retry_lost();
         let mut saved: Vec<Saved> = Vec::new();
         let active_id = self.active.map(|i| self.sessions_id(i));

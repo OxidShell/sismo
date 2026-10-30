@@ -12,7 +12,7 @@ use sismo_analysis::{
 };
 use sismo_format::{Chunk, FileWriter};
 
-use crate::client::{ClientEvent, Command as Cmd, Connection, Scanner};
+use crate::client::{ClientEvent, Command as Cmd, Connection, ScanEvent, Scanner};
 
 /// Remote and recorded performance + log analysis for Rust apps.
 ///
@@ -410,7 +410,7 @@ fn scan(timeout: &str) -> Result<(), CliError> {
     let mut found = 0;
     while let Some(left) = deadline.checked_duration_since(Instant::now()) {
         match scanner.events.recv_timeout(left) {
-            Ok(Ok(app)) => {
+            Ok(Ok(ScanEvent::Found(app))) => {
                 found += 1;
                 let b = &app.beacon;
                 println!(
@@ -424,6 +424,7 @@ fn scan(timeout: &str) -> Result<(), CliError> {
                     b.fingerprint
                 );
             }
+            Ok(Ok(ScanEvent::Lost(_))) => {}
             Ok(Err(error)) => return Err(CliError::Live(error)),
             Err(_) => break,
         }
@@ -442,7 +443,7 @@ pub fn resolve(target: &str) -> Result<SocketAddr, CliError> {
     let deadline = Instant::now() + Duration::from_secs(5);
     while let Some(left) = deadline.checked_duration_since(Instant::now()) {
         match scanner.events.recv_timeout(left) {
-            Ok(Ok(app)) if app.beacon.app == target => return Ok(app.addr),
+            Ok(Ok(ScanEvent::Found(app))) if app.beacon.app == target => return Ok(app.addr),
             Ok(_) => {}
             Err(_) => break,
         }

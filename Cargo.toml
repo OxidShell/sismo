@@ -57,6 +57,8 @@ istmo-core = { path = "../istmo/istmo/crates/core" }
 istmo-macros = { path = "../istmo/istmo/crates/macros" }
 istmo-build = { path = "../istmo/istmo/crates/build" }
 istmo-plugins = { path = "../istmo/istmo/crates/plugins" }
+# Reconnection fixes not yet released on crates.io.
+zudp = { path = "../GamerOS/zudp" }
 
 # The viewer draws thousands of spans per frame; fully unoptimized it
 # stutters, so debug builds keep some optimization and all of it for deps.

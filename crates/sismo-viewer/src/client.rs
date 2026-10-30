@@ -7,13 +7,11 @@ use std::time::{Duration, Instant};
 use sismo_format::SessionInfo;
 use sismo_format::net::{Beacon, DISCOVERY_APP_ID, ToRecorder, ToViewer, stream};
 use tokio::sync::mpsc;
-use zudp::{Discovery, DiscoveryConfig, Keypair, RawBytes, Zudp};
+use zudp::{Discovery, DiscoveryConfig, DiscoveryEvent, Keypair, RawBytes, Zudp};
 
 /// Silence after which a connection counts as lost.
 const LOST_AFTER: Duration = Duration::from_secs(6);
 const PING_EVERY: Duration = Duration::from_secs(2);
-/// Probes per scan stream before it is recreated (see [`Scanner::start`]).
-const RESCAN_PROBES: u32 = 4;
 
 /// An app announcing itself on the LAN.
 #[derive(Debug, Clone)]
@@ -21,6 +19,15 @@ pub struct Discovered {
     pub addr: SocketAddr,
     pub beacon: Beacon,
     pub seen: Instant,
+}
+
+/// A change in the apps announcing on the LAN.
+#[derive(Debug, Clone)]
+pub enum ScanEvent {
+    /// New, restarted or changed app.
+    Found(Discovered),
+    /// No longer announcing; `addr` is its data address.
+    Lost(SocketAddr),
 }
 
 /// Something that happened on a connection, in arrival order.
@@ -94,7 +101,7 @@ pub fn viewer_key_path() -> PathBuf {
 
 /// Background LAN scanner; new apps arrive on [`Scanner::events`].
 pub struct Scanner {
-    pub events: flume::Receiver<Result<Discovered, String>>,
+    pub events: flume::Receiver<Result<ScanEvent, String>>,
     _thread: std::thread::JoinHandle<()>,
 }
 
@@ -110,43 +117,35 @@ impl Scanner {
             .name("sismo-scan".into())
             .spawn(move || {
                 runtime.block_on(async move {
-                    // A scan stream reports each address once, so a restarted
-                    // app (same address, new session) would never show up
-                    // again; a fresh stream every few probes reports
-                    // everyone still announcing and keeps `seen` current.
-                    let rescan = probe_every.saturating_mul(RESCAN_PROBES);
+                    let config =
+                        DiscoveryConfig::new(DISCOVERY_APP_ID, 0).probe_interval(probe_every);
+                    let mut scan = match Discovery::scan_stream::<RawBytes>(config).await {
+                        Ok(scan) => scan,
+                        Err(error) => {
+                            let _ = tx.send(Err(error.to_string()));
+                            return;
+                        }
+                    };
                     loop {
-                        let config =
-                            DiscoveryConfig::new(DISCOVERY_APP_ID, 0).probe_interval(probe_every);
-                        let mut scan = match Discovery::scan_stream::<RawBytes>(config).await {
-                            Ok(scan) => scan,
-                            Err(error) => {
-                                if tx.send(Err(error.to_string())).is_err() {
-                                    return;
-                                }
-                                tokio::time::sleep(rescan).await;
-                                continue;
+                        let event = match scan.next_event().await {
+                            Ok(DiscoveryEvent::Found(peer) | DiscoveryEvent::Updated(peer)) => {
+                                let Ok(beacon) = Beacon::decode(&peer.meta.0) else {
+                                    continue;
+                                };
+                                Ok(ScanEvent::Found(Discovered {
+                                    addr: SocketAddr::new(peer.data_addr.ip(), beacon.port),
+                                    beacon,
+                                    seen: Instant::now(),
+                                }))
                             }
+                            Ok(DiscoveryEvent::Lost { data_addr }) => {
+                                Ok(ScanEvent::Lost(data_addr))
+                            }
+                            Ok(_) => continue,
+                            Err(error) => Err(error.to_string()),
                         };
-                        let until = tokio::time::Instant::now() + rescan;
-                        while let Ok(next) = tokio::time::timeout_at(until, scan.next()).await {
-                            let event = match next {
-                                Ok(peer) => {
-                                    let Ok(beacon) = Beacon::decode(&peer.meta.0) else {
-                                        continue;
-                                    };
-                                    Ok(Discovered {
-                                        addr: SocketAddr::new(peer.data_addr.ip(), beacon.port),
-                                        beacon,
-                                        seen: Instant::now(),
-                                    })
-                                }
-                                // One bad packet must not stop discovery.
-                                Err(error) => Err(error.to_string()),
-                            };
-                            if tx.send(event).is_err() {
-                                return;
-                            }
+                        if tx.send(event).is_err() {
+                            return;
                         }
                     }
                 });
@@ -193,7 +192,7 @@ impl Connection {
                     };
                     let wire = |msg: ToRecorder| RawBytes(msg.encode().into());
                     if conn
-                        .send_stream(wire(ToRecorder::Hello { viewer: viewer_name }), stream::CONTROL)
+                        .send_stream(wire(ToRecorder::Hello { viewer: viewer_name.clone() }), stream::CONTROL)
                         .await
                         .is_err()
                     {
@@ -203,10 +202,15 @@ impl Connection {
                     let mut last_heard = Instant::now();
                     let mut pings: Vec<(u64, Instant)> = Vec::new();
                     let mut nonce = 0u64;
+                    let mut peer = conn.events();
                     loop {
                         tokio::select! {
                             packet = conn.recv() => {
-                                let Ok(packet) = packet else { return lost("connection closed".into()) };
+                                let packet = match packet {
+                                    Ok(packet) => packet,
+                                    Err(zudp::Error::PeerTimeout { .. }) => return lost("the app stopped answering".into()),
+                                    Err(_) => return lost("connection closed".into()),
+                                };
                                 last_heard = Instant::now();
                                 let Ok(message) = ToViewer::decode(&packet.msg.0) else { continue };
                                 let event = match message {
@@ -244,6 +248,16 @@ impl Connection {
                                 };
                                 if conn.send_stream(wire(message), stream::CONTROL).await.is_err() {
                                     return lost("could not reach the app".into());
+                                }
+                            }
+                            event = peer.recv() => {
+                                // The app restarted under a live connection: the
+                                // transport set up a new session, so introduce
+                                // ourselves again; the welcome tells the rest.
+                                let Ok(event) = event else { return lost("connection closed".into()) };
+                                if let zudp::PeerEvent::Reset { .. } = event {
+                                    let hello = ToRecorder::Hello { viewer: viewer_name.clone() };
+                                    let _ = conn.send_stream(wire(hello), stream::CONTROL).await;
                                 }
                             }
                             _ = ping.tick() => {

@@ -11,7 +11,7 @@ use sismo_format::net::{AuthMode, Beacon, DISCOVERY_APP_ID, ToRecorder, ToViewer
 use sismo_format::{Chunk, FORMAT_VERSION, FileWriter};
 use tokio::sync::mpsc;
 use zudp::{Discovery, DiscoveryConfig};
-use zudp::{Keypair, RawBytes, Zudp, ZudpSender, ZudpSocket};
+use zudp::{Keypair, PeerEvent, RawBytes, Zudp, ZudpSender, ZudpSocket};
 
 use crate::collector::snapshot_chunk;
 use crate::config::LiveConfig;
@@ -470,6 +470,27 @@ impl Server {
         let _ = std::fs::remove_file(path);
     }
 
+    /// Keeps viewers in step with their transport sessions: a viewer whose
+    /// session timed out or was replaced (it restarted) is gone, and one that
+    /// moved to another address keeps its state there.
+    fn on_peer(&mut self, event: &PeerEvent) {
+        match event {
+            &PeerEvent::Disconnected { addr, .. } | &PeerEvent::Reset { addr, .. } => {
+                self.forget(addr);
+            }
+            &PeerEvent::Migrated { from, to } => {
+                if let Some(viewer) = self.viewers.remove(&from) {
+                    self.viewers.insert(to, viewer);
+                }
+                if self.device_owner == Some(from) {
+                    self.device_owner = Some(to);
+                }
+            }
+            // Connected needs nothing: a viewer starts with its hello.
+            _ => {}
+        }
+    }
+
     /// Drops a viewer; an on-device recording it started is discarded so a
     /// lost viewer never fills the device's storage.
     fn forget(&mut self, addr: SocketAddr) {
@@ -597,6 +618,7 @@ pub(crate) fn start(config: &LiveConfig, handle: &Handle) -> io::Result<NetHandl
                     device_owner: None,
                 };
                 let mut ticker = tokio::time::interval(Duration::from_secs(5));
+                let mut peers = socket.events();
                 loop {
                     tokio::select! {
                         packet = socket.recv() => {
@@ -608,6 +630,10 @@ pub(crate) fn start(config: &LiveConfig, handle: &Handle) -> io::Result<NetHandl
                         feed = feed_rx.recv() => {
                             let Some((seq, chunk)) = feed else { return };
                             server.forward(seq, &chunk).await;
+                        }
+                        event = peers.recv() => {
+                            let Ok(event) = event else { return };
+                            server.on_peer(&event);
                         }
                         _ = ticker.tick() => server.expire(),
                     }
