@@ -15,6 +15,17 @@ sismo = { path = "crates/sismo" }
 thiserror = "2"
 lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 crc32fast = "1.5"
+sismo-macros = { path = "crates/sismo-macros" }
+log = { version = "0.4", features = ["std", "kv"] }
+tracing = "0.1"
+tracing-core = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+libc = "0.2"
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+zudp = { version = "0.3.8", default-features = false, features = ["security", "discovery"] }
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

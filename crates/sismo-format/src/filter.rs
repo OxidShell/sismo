@@ -119,7 +119,8 @@ impl Filter {
             entry.1 = level;
         } else {
             self.directives.push((target, level));
-            self.directives.sort_by_key(|d| std::cmp::Reverse(d.0.len()));
+            self.directives
+                .sort_by_key(|d| std::cmp::Reverse(d.0.len()));
         }
     }
 
