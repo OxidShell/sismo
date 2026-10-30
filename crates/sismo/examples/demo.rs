@@ -39,12 +39,20 @@ fn main() {
         .dump_dir("demo-traces/dumps");
     #[cfg(feature = "net")]
     let config = config.live(sismo::LiveConfig {
-        auth: sismo::format::net::AuthMode::Open,
+        auth: if std::env::var_os("DEMO_PAIRING").is_some() {
+            sismo::format::net::AuthMode::Pairing
+        } else {
+            sismo::format::net::AuthMode::Open
+        },
         ..sismo::LiveConfig::default()
     });
     let handle = sismo::install(config).expect("install sismo");
     sismo::log::init(None, log::LevelFilter::Off).expect("install logger");
     log::info!(target: "demo", "demo started");
+    #[cfg(feature = "net")]
+    if let Some(code) = handle.pairing_code() {
+        println!("pairing code: {code}");
+    }
 
     std::thread::Builder::new()
         .name("sync".into())

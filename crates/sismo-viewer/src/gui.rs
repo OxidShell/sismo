@@ -70,7 +70,7 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    fn new(file: Option<PathBuf>) -> Self {
+    fn new(file: Option<PathBuf>, live: Option<SocketAddr>) -> Self {
         let scanner = Scanner::start(Duration::from_secs(1));
         let scan_error = scanner.as_ref().err().map(ToString::to_string);
         let mut workspace = Self {
@@ -87,6 +87,9 @@ impl Workspace {
         };
         if let Some(file) = file {
             workspace.open_file(&file);
+        }
+        if let Some(addr) = live {
+            workspace.connect(addr);
         }
         workspace
     }
@@ -309,9 +312,10 @@ fn handle_shortcut(mut ws: State<Workspace>, event: &KeyboardEventData) {
 
 fn app() -> impl IntoElement {
     let file = use_try_consume::<Option<PathBuf>>().flatten();
+    let live = use_try_consume::<Option<SocketAddr>>().flatten();
     let tab = use_try_consume::<Tab>();
     let mut ws = use_state(move || {
-        let mut workspace = Workspace::new(file);
+        let mut workspace = Workspace::new(file, live);
         if let (Some(tab), Some(view)) = (tab, workspace.active_mut()) {
             view.tab = tab;
         }
@@ -355,7 +359,7 @@ fn app() -> impl IntoElement {
 }
 
 /// Opens the viewer window; blocks until it closes.
-pub fn run(file: Option<PathBuf>) {
+pub fn run(file: Option<PathBuf>, live: Option<SocketAddr>) {
     use theme::{
         MONO, MONO_MEDIUM, MONO_REGULAR, MONO_SEMIBOLD, SANS, SANS_REGULAR, SANS_SEMIBOLD,
     };
@@ -374,7 +378,8 @@ pub fn run(file: Option<PathBuf>) {
                     .with_title("sismo")
                     .with_app_id("dev.sismo.viewer")
                     .with_background((0x16, 0x16, 0x15))
-                    .with_root_context(file),
+                    .with_root_context(file)
+                    .with_root_context(live),
             ),
     );
 }
@@ -426,6 +431,56 @@ mod snapshots {
             runner.sync_and_update();
             let name = tab.map_or("sessions", Tab::label).to_lowercase();
             runner.render_to_file(dir.join(format!("sismo-{name}.png")));
+        }
+    }
+}
+
+#[cfg(test)]
+mod live_snapshot {
+    use std::net::SocketAddr;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use freya::prelude::*;
+    use freya_testing::prelude::*;
+
+    use super::theme;
+    use crate::workspace::Tab;
+
+    /// Connects to `SISMO_SNAPSHOT_LIVE` (ip:port), streams for a few
+    /// seconds and renders the Timeline and Logs tabs.
+    #[test]
+    #[ignore = "needs a live app; run explicitly"]
+    fn render_live() {
+        let Some(addr) = std::env::var("SISMO_SNAPSHOT_LIVE")
+            .ok()
+            .and_then(|a| a.parse::<SocketAddr>().ok())
+        else {
+            return;
+        };
+        let dir =
+            std::env::var_os("SISMO_SNAPSHOT_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        for tab in [Tab::Timeline, Tab::Logs] {
+            let (mut runner, ()) = TestingRunner::new(
+                super::app,
+                (1440., 900.).into(),
+                move |r| {
+                    r.provide_root_context(move || Some(addr));
+                    r.provide_root_context(|| None::<PathBuf>);
+                    r.provide_root_context(move || tab);
+                },
+                1.,
+            );
+            for (name, bytes) in [
+                (theme::SANS, theme::SANS_REGULAR),
+                (theme::SANS, theme::SANS_SEMIBOLD),
+                (theme::MONO, theme::MONO_REGULAR),
+            ] {
+                Platform::get().load_font(name, Bytes::from_static(bytes));
+            }
+            runner.poll(Duration::from_millis(100), Duration::from_secs(3));
+            runner
+                .render_to_file(dir.join(format!("sismo-live-{}.png", tab.label().to_lowercase())));
         }
     }
 }

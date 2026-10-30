@@ -28,6 +28,8 @@ pub struct Cli {
 pub enum Command {
     /// Open the viewer on a recording.
     Open { file: PathBuf },
+    /// Open the viewer connected to a live app (`ip:port` or app name).
+    Connect { target: String },
     /// Overview: frames, time split, top functions, slow frames, problems.
     Summary(FileArgs),
     /// Per-function timing table.
@@ -159,7 +161,7 @@ fn print_json(value: &impl serde::Serialize) -> Result<(), CliError> {
 /// [`CliError`] for unreadable input, bad arguments or network failures.
 pub fn run(command: Command) -> Result<(), CliError> {
     match command {
-        Command::Open { .. } => Ok(()),
+        Command::Open { .. } | Command::Connect { .. } => Ok(()),
         Command::Summary(args) => summary(&args),
         Command::Functions { file, sort, limit } => functions(&file, &sort, limit),
         Command::Frames { file, limit } => frames(&file, limit),
@@ -397,7 +399,7 @@ fn scan(timeout: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-fn resolve(target: &str) -> Result<SocketAddr, CliError> {
+pub fn resolve(target: &str) -> Result<SocketAddr, CliError> {
     if let Ok(addr) = target.parse::<SocketAddr>() {
         return Ok(addr);
     }

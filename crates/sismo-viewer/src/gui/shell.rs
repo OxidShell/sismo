@@ -138,7 +138,7 @@ fn tabs_row(mut ws: State<Workspace>, index: usize, view: &SessionView) -> Rect 
         .children(Tab::ALL.iter().map(|tab| {
             let tab = *tab;
             let on = tab == current;
-            let tab_w = super::draw::measure(tab.label(), 13., false) * 1.06 + 26.;
+            let tab_w = super::draw::measure(tab.label(), 13., false) * 1.12 + 28.;
             rect()
                 .width(Size::px(tab_w))
                 .cursor(CursorIcon::Pointer)

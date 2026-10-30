@@ -433,7 +433,12 @@ impl SessionView {
         if changed {
             if self.follow && !self.paused {
                 let (start, end) = self.session.span();
-                let width = self.view.1.saturating_sub(self.view.0).max(1);
+                let current = self.view.1.saturating_sub(self.view.0);
+                let width = if current < 1_000_000 {
+                    3_000_000_000
+                } else {
+                    current
+                };
                 self.view = (end.saturating_sub(width).max(start), end.max(start + 1));
             }
             self.revision += 1;
