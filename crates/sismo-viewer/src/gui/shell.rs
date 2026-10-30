@@ -200,18 +200,77 @@ fn tabs_row(mut ws: State<Workspace>, index: usize, view: &SessionView) -> Rect 
         )
 }
 
-fn side_panel(mut ws: State<Workspace>, view: &SessionView) -> Rect {
-    let session = &view.session;
-    let window = view.window();
-    // Self time per crate in the window, to show each crate's share.
-    let mut per_crate: HashMap<String, u64> = HashMap::new();
-    for thread in &session.threads {
-        for span in thread.spans_in(window.0, window.1) {
+/// Time per crate and per thread inside a window.
+#[derive(Clone, Default)]
+struct Shares {
+    per_crate: HashMap<String, u64>,
+    /// Thread id and time spent in its top-level spans.
+    per_thread: Vec<(u32, u64)>,
+}
+
+impl Shares {
+    fn measure(session: &sismo_analysis::Session, window: (u64, u64)) -> Self {
+        let mut per_callsite: HashMap<u32, u64> = HashMap::new();
+        let mut per_thread = Vec::with_capacity(session.threads.len());
+        for thread in &session.threads {
+            let mut top = 0;
+            for span in thread.spans_in(window.0, window.1) {
+                *per_callsite.entry(span.callsite).or_default() += span.self_ns;
+                if span.depth == 0 {
+                    top += span.duration(session.end);
+                }
+            }
+            per_thread.push((thread.id, top));
+        }
+        let mut per_crate: HashMap<String, u64> = HashMap::new();
+        for (callsite, ns) in per_callsite {
             *per_crate
-                .entry(session.crate_of(span.callsite).to_owned())
-                .or_default() += span.self_ns;
+                .entry(session.crate_of(callsite).to_owned())
+                .or_default() += ns;
+        }
+        Self {
+            per_crate,
+            per_thread,
         }
     }
+}
+
+/// Session, window and event count a [`Shares`] was measured for.
+type SharesKey = (u64, (u64, u64), u64);
+
+thread_local! {
+    /// Last shares measured, keyed by session, window and event count.
+    static SHARES: std::cell::RefCell<Option<(SharesKey, Shares)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Shares of `view`'s window. While a range is being dragged the last
+/// result is reused, so dragging stays smooth on long sessions.
+fn shares(view: &SessionView) -> Shares {
+    let key = (view.id, view.window(), view.session.events);
+    SHARES.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        match slot.as_ref() {
+            Some((cached, shares))
+                if *cached == key || (cached.0 == key.0 && timeline::dragging()) =>
+            {
+                shares.clone()
+            }
+            _ => {
+                let shares = Shares::measure(&view.session, key.1);
+                *slot = Some((key, shares.clone()));
+                shares
+            }
+        }
+    })
+}
+
+fn side_panel(mut ws: State<Workspace>, view: &SessionView) -> Rect {
+    let session = &view.session;
+    let Shares {
+        per_crate,
+        per_thread,
+    } = shares(view);
     let total: u64 = per_crate.values().sum::<u64>().max(1);
     let mut by_group: Vec<(Group, Vec<(String, u64)>)> =
         Group::ALL.iter().map(|g| (*g, Vec::new())).collect();
@@ -227,19 +286,9 @@ fn side_panel(mut ws: State<Workspace>, view: &SessionView) -> Rect {
     }
     let hidden = view.hidden_crates.clone();
     let hidden_threads = view.hidden_threads.clone();
-    let mut threads: Vec<(u32, String, u64)> = session
-        .threads
-        .iter()
-        .map(|t| {
-            (
-                t.id,
-                t.name.clone(),
-                t.spans_in(window.0, window.1)
-                    .filter(|s| s.depth == 0)
-                    .map(|s| s.duration(session.end))
-                    .sum(),
-            )
-        })
+    let mut threads: Vec<(u32, String, u64)> = per_thread
+        .into_iter()
+        .map(|(id, ns)| (id, session.thread_name(id).to_owned(), ns))
         .collect();
     threads.sort_by_key(|t| std::cmp::Reverse(t.2));
     let thread_total: u64 = threads.iter().map(|t| t.2).sum::<u64>().max(1);

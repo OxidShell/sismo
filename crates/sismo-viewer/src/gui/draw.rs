@@ -119,17 +119,14 @@ impl<'a> Painter<'a> {
         }
         let ellipsis = "…";
         let budget = max_w - font.measure_str(ellipsis, None).0;
-        let mut cut = String::new();
-        for c in text.chars() {
-            cut.push(c);
-            if font.measure_str(&cut, None).0 > budget {
-                cut.pop();
-                break;
-            }
-        }
-        if cut.is_empty() {
+        // Longest prefix that fits, found by halving: a few measures per
+        // label instead of one per character.
+        let ends: Vec<usize> = text.char_indices().map(|(i, c)| i + c.len_utf8()).collect();
+        let fits = ends.partition_point(|end| font.measure_str(&text[..*end], None).0 <= budget);
+        let Some(end) = fits.checked_sub(1).map(|i| ends[i]) else {
             return;
-        }
+        };
+        let mut cut = text[..end].to_owned();
         cut.push_str(ellipsis);
         self.canvas
             .draw_str(&cut, (x, baseline), &font, &self.paint);
@@ -260,45 +257,49 @@ impl Scene {
             let freya::prelude::RenderTarget::Background { canvas, .. } = &mut ctx.target else {
                 return;
             };
-            let mut p = Painter::new(canvas);
-            for cmd in &self.cmds {
-                match cmd {
-                    Cmd::Rect {
-                        x,
-                        y,
-                        w,
-                        h,
-                        rgb,
-                        alpha,
-                    } => p.rect_alpha(*x, *y, *w, *h, *rgb, *alpha),
-                    Cmd::Outline {
-                        x,
-                        y,
-                        w,
-                        h,
-                        width,
-                        rgb,
-                    } => p.outline(*x, *y, *w, *h, *width, *rgb),
-                    Cmd::Line {
-                        from,
-                        to,
-                        width,
-                        rgb,
-                        alpha,
-                    } => p.line(*from, *to, *width, *rgb, *alpha),
-                    Cmd::Text {
-                        text,
-                        x,
-                        y,
-                        size,
-                        rgb,
-                        mono,
-                        max_w,
-                    } => {
-                        p.text(text, *x, *y, *size, *rgb, *mono, *max_w);
-                    }
+            self.replay(canvas);
+        })
+    }
+
+    fn replay(&self, canvas: &Canvas) {
+        let mut p = Painter::new(canvas);
+        for cmd in &self.cmds {
+            match cmd {
+                Cmd::Rect {
+                    x,
+                    y,
+                    w,
+                    h,
+                    rgb,
+                    alpha,
+                } => p.rect_alpha(*x, *y, *w, *h, *rgb, *alpha),
+                Cmd::Outline {
+                    x,
+                    y,
+                    w,
+                    h,
+                    width,
+                    rgb,
+                } => p.outline(*x, *y, *w, *h, *width, *rgb),
+                Cmd::Line {
+                    from,
+                    to,
+                    width,
+                    rgb,
+                    alpha,
+                } => p.line(*from, *to, *width, *rgb, *alpha),
+                Cmd::Text {
+                    text,
+                    x,
+                    y,
+                    size,
+                    rgb,
+                    mono,
+                    max_w,
+                } => {
+                    p.text(text, *x, *y, *size, *rgb, *mono, *max_w);
                 }
             }
-        })
+        }
     }
 }

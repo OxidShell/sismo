@@ -115,17 +115,30 @@ impl Thread {
 
     /// Spans overlapping `[from, to)`, in begin order.
     pub fn spans_in(&self, from: u64, to: u64) -> impl Iterator<Item = &Span> {
-        self.indices_in(from, to)
+        let first = self.first_at(from);
+        self.open_at(first, from)
             .into_iter()
             .map(|i| &self.spans[i as usize])
+            .chain(self.spans[first..].iter().take_while(move |s| s.start < to))
     }
 
     /// Indices of the spans overlapping `[from, to)`, in begin order.
     #[must_use]
     pub fn indices_in(&self, from: u64, to: u64) -> Vec<u32> {
         let first = self.first_at(from);
-        // On one thread spans nest, so everything still open at `from` is an
-        // ancestor (or self) of the last span that began before it.
+        let mut indices = self.open_at(first, from);
+        let tail = self.spans[first..]
+            .iter()
+            .take_while(|s| s.start < to)
+            .count();
+        indices.extend((first..first + tail).filter_map(|i| u32::try_from(i).ok()));
+        indices
+    }
+
+    /// Spans that began before `from` (index `first`) and are still open
+    /// at it, outermost first. On one thread spans nest, so these are the
+    /// last span that began before `from` and its ancestors.
+    fn open_at(&self, first: usize, from: u64) -> Vec<u32> {
         let mut indices = Vec::new();
         let mut cursor = first.checked_sub(1).and_then(|i| u32::try_from(i).ok());
         while let Some(index) = cursor {
@@ -136,11 +149,6 @@ impl Thread {
             cursor = span.parent;
         }
         indices.reverse();
-        let tail = self.spans[first..]
-            .iter()
-            .take_while(|s| s.start < to)
-            .count();
-        indices.extend((first..first + tail).filter_map(|i| u32::try_from(i).ok()));
         indices
     }
 }

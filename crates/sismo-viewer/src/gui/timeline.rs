@@ -3,10 +3,11 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use freya::prelude::*;
 use sismo_analysis::units::{Clock, Nanos};
-use sismo_analysis::{Group, GroupSplit, Query, SLOW_FRAME_NS, Session, percentile};
+use sismo_analysis::{FrameSummary, Group, GroupSplit, Query, SLOW_FRAME_NS, Session, percentile};
 
 use super::Workspace;
 use super::draw::Scene;
@@ -25,6 +26,66 @@ thread_local! {
     /// Per session: cached group split of every frame already measured.
     static SPLITS: RefCell<HashMap<u64, Vec<GroupSplit>>> = RefCell::new(HashMap::new());
     static DRAG: RefCell<Option<Drag>> = const { RefCell::new(None) };
+    /// Frame summary of the whole session, keyed by session and frame count.
+    static SUMMARY: RefCell<Option<((u64, usize), FrameSummary)>> = const { RefCell::new(None) };
+    /// Sorted call durations and child count of the selected span.
+    static DETAIL: RefCell<Option<(DetailKey, Rc<SpanStats>)>> = const { RefCell::new(None) };
+}
+
+/// Session, thread, span index and event count of a [`SpanStats`].
+type DetailKey = (u64, u32, u32, u64);
+
+/// What the detail panel shows about the selected span's function.
+struct SpanStats {
+    durations: Vec<u64>,
+    children: usize,
+}
+
+fn frame_summary(view: &SessionView) -> FrameSummary {
+    let key = (view.id, view.session.frames.len());
+    SUMMARY.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if let Some((cached, summary)) = slot.as_ref()
+            && *cached == key
+        {
+            return *summary;
+        }
+        let summary = view.session.frame_summary(view.session.span());
+        *slot = Some((key, summary));
+        summary
+    })
+}
+
+fn span_stats(view: &SessionView, thread: &sismo_analysis::Thread, index: u32) -> Rc<SpanStats> {
+    let key = (view.id, thread.id, index, view.session.events);
+    DETAIL.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if let Some((cached, stats)) = slot.as_ref()
+            && *cached == key
+        {
+            return Rc::clone(stats);
+        }
+        let session = &view.session;
+        let callsite = thread.spans[index as usize].callsite;
+        let mut durations: Vec<u64> = session
+            .calls_of(callsite, session.span())
+            .iter()
+            .map(|c| c.0)
+            .collect();
+        durations.sort_unstable();
+        let children = thread
+            .spans
+            .iter()
+            .skip(index as usize + 1)
+            .filter(|s| s.parent == Some(index))
+            .count();
+        let stats = Rc::new(SpanStats {
+            durations,
+            children,
+        });
+        *slot = Some((key, Rc::clone(&stats)));
+        stats
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -420,6 +481,11 @@ fn pan(view: &mut SessionView, delta: i64) {
     view.revision += 1;
 }
 
+/// Whether a pan or range selection is being dragged right now.
+pub fn dragging() -> bool {
+    DRAG.with(|d| d.borrow().is_some_and(|d| d.moved))
+}
+
 pub fn keyboard_nav(view: &mut SessionView, key: &str) {
     if view.tab != Tab::Timeline {
         return;
@@ -474,20 +540,15 @@ fn detail(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
     let thread = session.thread(thread_id)?;
     let span = *thread.spans.get(index as usize)?;
     let def = session.callsite(span.callsite);
-    let children = thread
-        .spans
-        .iter()
-        .filter(|s| s.parent == Some(index))
-        .count();
-    let calls = session.calls_of(span.callsite, session.span());
-    let mut durations: Vec<u64> = calls.iter().map(|c| c.0).collect();
-    durations.sort_unstable();
-    let p50 = percentile(&durations, 0.5);
-    let p95 = percentile(&durations, 0.95);
+    let stats = span_stats(view, thread, index);
+    let durations = &stats.durations;
+    let children = stats.children;
+    let p50 = percentile(durations, 0.5);
+    let p95 = percentile(durations, 0.95);
     let max = durations.last().copied().unwrap_or(0);
     let bins = 24usize;
     let mut hist = vec![0u32; bins];
-    for d in &durations {
+    for d in durations {
         let b = usize::try_from(d * (bins as u64 - 1) / max.max(1))
             .unwrap_or(0)
             .min(bins - 1);
@@ -599,7 +660,7 @@ fn detail(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
                     .child(text(
                         tr!(
                             "timeline-session-calls",
-                            count = calls.len().to_string(),
+                            count = durations.len().to_string(),
                             p50 = Nanos(p50).to_string(),
                             p95 = Nanos(p95).to_string(),
                             max = Nanos(max).to_string(),
@@ -639,10 +700,9 @@ fn detail(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
 }
 
 pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
-    let session = &view.session;
     let query = view.effective_query();
     let splits = frame_splits(view);
-    let summary = session.frame_summary(session.span());
+    let summary = frame_summary(view);
     let strip_w = view.canvas.get("strip").map_or(1000., |s| s.0);
     let lanes_w = view.canvas.get("lanes").map_or(1000., |s| s.0);
     let (lane_list, lanes_h) = lanes(view);
