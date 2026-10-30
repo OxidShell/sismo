@@ -12,6 +12,9 @@ authors = ["Sergio Ribera"]
 [workspace.dependencies]
 sismo-format = { path = "crates/sismo-format" }
 sismo = { path = "crates/sismo" }
+thiserror = "2"
+lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
+crc32fast = "1.5"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
