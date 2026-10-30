@@ -2415,6 +2415,7 @@ dependencies = [
  "objc2 0.6.5",
  "pollster",
  "tracing",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
