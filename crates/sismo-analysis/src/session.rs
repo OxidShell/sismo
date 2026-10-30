@@ -406,6 +406,10 @@ impl Session {
             .frame_thread
             .and_then(|ft| self.frame_marks.get(&ft))
             .map_or(0, Vec::len);
+        let spans = self
+            .thread_index
+            .get(&thread)
+            .map_or(&[][..], |i| self.threads[*i].spans.as_slice());
         if self.frame_thread != Some(thread) && count > current {
             // The thread with most marks drives frames; rebuild when it changes.
             self.frame_thread = Some(thread);
@@ -415,16 +419,16 @@ impl Session {
                 .map(|(i, w)| Frame {
                     index: u32::try_from(i).unwrap_or(u32::MAX),
                     thread,
-                    start: w[0],
+                    start: frame_start(spans, w[0], w[1]),
                     end: w[1],
                 })
                 .collect();
         } else if self.frame_thread == Some(thread) && count >= 2 {
-            let start = self.frame_marks[&thread][count - 2];
+            let previous = self.frame_marks[&thread][count - 2];
             self.frames.push(Frame {
                 index: u32::try_from(self.frames.len()).unwrap_or(u32::MAX),
                 thread,
-                start,
+                start: frame_start(spans, previous, t),
                 end: t,
             });
         }
@@ -490,11 +494,61 @@ impl Session {
         self.info.started_unix_ns.saturating_add(t)
     }
 
+    /// Forgets every recorded event but keeps the app, thread and callsite
+    /// definitions, so a live stream keeps decoding from here on. Spans
+    /// still open are dropped too; their ends are ignored when they come.
+    pub fn clear_events(&mut self) {
+        for thread in &mut self.threads {
+            thread.spans.clear();
+            thread.stack.clear();
+            thread.max_depth = 0;
+            thread.pending_alloc = None;
+        }
+        self.async_spans.clear();
+        self.open_async.clear();
+        self.logs.clear();
+        self.counters.clear();
+        self.frames.clear();
+        self.frame_marks.clear();
+        self.frame_thread = None;
+        self.markers.clear();
+        self.panics.clear();
+        self.dropped = 0;
+        self.end = 0;
+        self.start = None;
+        self.events = 0;
+    }
+
     /// First and last timestamp of the recording.
     #[must_use]
     pub fn span(&self) -> (u64, u64) {
         (self.start.unwrap_or(0), self.end)
     }
+}
+
+/// A pause longer than this between top-level spans means the thread was
+/// idle, not still producing the frame.
+const IDLE_GAP_NS: u64 = 4_000_000;
+
+/// Where the frame ending at `end` began: walking back from the mark over
+/// top-level spans while they follow each other closely, so an app idling
+/// between redraws does not show the wait as one long frame. Threads
+/// without spans keep mark-to-mark.
+fn frame_start(spans: &[Span], previous: u64, end: u64) -> u64 {
+    if spans.is_empty() {
+        return previous;
+    }
+    let first = spans.partition_point(|s| s.start < previous);
+    let last = spans.partition_point(|s| s.start < end);
+    let mut start = end;
+    for span in spans[first..last].iter().rev().filter(|s| s.depth == 0) {
+        let span_end = if span.is_open() { end } else { span.end };
+        if span_end.saturating_add(IDLE_GAP_NS) < start {
+            break;
+        }
+        start = start.min(span.start);
+    }
+    start
 }
 
 #[cfg(test)]
@@ -544,8 +598,53 @@ mod tests {
         assert_eq!(main.spans[1].depth, 1);
         assert_eq!(main.spans[1].parent, Some(0));
         assert_eq!(session.frames.len(), 1);
-        assert_eq!(session.frames[0].duration(), 110);
+        // The frame starts at its first span, not at the previous mark.
+        assert_eq!(session.frames[0].duration(), 100);
         assert_eq!(main.spans_in(30, 40).count(), 2);
         assert_eq!(main.spans_in(60, 70).count(), 1);
+    }
+
+    #[test]
+    fn idle_time_between_redraws_is_not_frame_time() {
+        let mut session = Session::default();
+        session.ingest(vec![
+            def(1, "app::frame"),
+            Record::Batch {
+                thread: 1,
+                events: vec![
+                    Event::Frame { t: 0 },
+                    Event::Begin {
+                        t: 60_000,
+                        callsite: 1,
+                    },
+                    Event::End { t: 64_000 },
+                    Event::Frame { t: 65_000 },
+                ],
+            },
+        ]);
+        assert_eq!(session.frames[0].start, 60_000);
+        assert_eq!(session.frames[0].duration(), 5_000);
+    }
+
+    #[test]
+    fn clearing_keeps_definitions_for_later_events() {
+        let mut session = Session::default();
+        session.ingest(vec![
+            def(1, "app::work"),
+            Record::Batch {
+                thread: 1,
+                events: vec![Event::Begin { t: 1, callsite: 1 }, Event::End { t: 5 }],
+            },
+        ]);
+        session.clear_events();
+        assert!(session.thread(1).unwrap().spans.is_empty());
+        assert_eq!(session.span(), (0, 0));
+        session.ingest(vec![Record::Batch {
+            thread: 1,
+            events: vec![Event::Begin { t: 9, callsite: 1 }, Event::End { t: 12 }],
+        }]);
+        assert_eq!(session.thread(1).unwrap().spans.len(), 1);
+        assert_eq!(session.name(1), "app::work");
+        assert_eq!(session.span(), (9, 12));
     }
 }
