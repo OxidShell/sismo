@@ -1,0 +1,18 @@
+[package]
+name = "sismo-viewer"
+description = "Desktop viewer and headless CLI for sismo sessions and recordings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sismo"
+path = "src/main.rs"
+
+[dependencies]
+sismo-format.workspace = true
+
+[lints]
+workspace = true

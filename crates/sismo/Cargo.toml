@@ -1,0 +1,24 @@
+[package]
+name = "sismo"
+description = "Low-overhead in-app recorder for spans, logs and counters, streamed live or saved to file"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+tracing = []
+log = []
+stdio = []
+puffin = []
+alloc = []
+file = []
+net = []
+
+[dependencies]
+sismo-format.workspace = true
+
+[lints]
+workspace = true
