@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::registry::{ACTIVE, registry};
 use crate::sink::{RingBuffer, RotatingFile, lock};
 use crate::thread::{self, set_sender};
-use crate::time::{FileStamp, unix_ns};
+use sismo_format::{FileStamp, unix_ns};
 
 /// Reasons [`install`] can fail.
 #[derive(Debug, thiserror::Error)]
@@ -127,12 +127,7 @@ fn start(config: Config) -> Result<Handle, InstallError> {
         .map_err(InstallError::Spawn)?;
 
     if let Some(record) = &config.record {
-        let sink = RotatingFile::new(
-            record.dir.clone(),
-            config.app.clone(),
-            record.max_file_bytes,
-            record.keep_files,
-        );
+        let sink = RotatingFile::new(record.dir.clone(), record.max_file_bytes, record.keep_files);
         let _ = sender.send(Message::AddSink(Box::new(sink)));
     }
 
@@ -216,11 +211,8 @@ impl Handle {
             .dump_dir
             .clone()
             .ok_or_else(|| io::Error::other("no dump directory configured"))?;
-        let path = dir.join(format!(
-            "{}-{label}-{}.sismo",
-            self.shared.app,
-            FileStamp::now()
-        ));
+        let stem = registry().session().file_stem(FileStamp::now());
+        let path = dir.join(format!("{stem}-{label}.sismo"));
         self.dump(&path)?;
         Ok(path)
     }

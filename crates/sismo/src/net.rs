@@ -96,7 +96,7 @@ fn hex(bytes: &[u8]) -> String {
 fn random_u64() -> u64 {
     use std::hash::{BuildHasher, Hasher};
     let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-    hasher.write_u64(crate::time::unix_ns());
+    hasher.write_u64(sismo_format::unix_ns());
     hasher.finish()
 }
 
@@ -353,11 +353,10 @@ impl Server {
         if state.writer.is_some() {
             return;
         }
-        let path = self.device_dir.join(format!(
-            "{}-device-{}.sismo",
-            registry().session().app,
-            crate::time::FileStamp::now()
-        ));
+        let stem = registry()
+            .session()
+            .file_stem(sismo_format::FileStamp::now());
+        let path = self.device_dir.join(format!("{stem}-device.sismo"));
         let opened = std::fs::create_dir_all(&self.device_dir)
             .and_then(|()| File::create(&path))
             .and_then(|f| FileWriter::new(BufWriter::new(f)));

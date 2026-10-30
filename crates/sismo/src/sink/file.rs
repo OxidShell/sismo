@@ -8,13 +8,12 @@ use sismo_format::{Chunk, FileWriter};
 
 use super::Sink;
 use crate::collector::snapshot_chunk;
-use crate::time::FileStamp;
+use sismo_format::FileStamp;
 
 /// Writes chunks to `.sismo` files, starting a new file when one grows past
 /// `max_file_bytes` and keeping at most `keep` files.
 pub(crate) struct RotatingFile {
     dir: PathBuf,
-    prefix: String,
     max_file_bytes: u64,
     keep: usize,
     current: Option<FileWriter<BufWriter<File>>>,
@@ -23,10 +22,9 @@ pub(crate) struct RotatingFile {
 }
 
 impl RotatingFile {
-    pub fn new(dir: PathBuf, prefix: String, max_file_bytes: u64, keep: usize) -> Self {
+    pub fn new(dir: PathBuf, max_file_bytes: u64, keep: usize) -> Self {
         Self {
             dir,
-            prefix,
             max_file_bytes,
             keep: keep.max(1),
             current: None,
@@ -38,12 +36,10 @@ impl RotatingFile {
     fn open_next(&mut self, snapshot: Option<&Chunk>) -> io::Result<()> {
         std::fs::create_dir_all(&self.dir)?;
         self.sequence += 1;
-        let name = format!(
-            "{}-{}-{}.sismo",
-            self.prefix,
-            FileStamp::now(),
-            self.sequence
-        );
+        let stem = crate::registry::registry()
+            .session()
+            .file_stem(FileStamp::now());
+        let name = format!("{stem}-{}.sismo", self.sequence);
         let path = self.dir.join(name);
         let mut writer = FileWriter::new(BufWriter::new(File::create(&path)?))?;
         match snapshot {

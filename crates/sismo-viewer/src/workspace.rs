@@ -286,6 +286,12 @@ impl SessionView {
         }
     }
 
+    /// Default name for files saved from this session.
+    #[must_use]
+    pub fn file_stem(&self) -> String {
+        self.session.info.file_stem(sismo_format::FileStamp::now())
+    }
+
     pub fn set_query(&mut self, text: String) {
         match Query::parse(&text) {
             Ok(query) => {

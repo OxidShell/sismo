@@ -14,7 +14,7 @@ use super::theme;
 use super::widgets::{Kind, bordered, button, caption, hline, kbd, mono, panel, scrim, text};
 use super::{Dialog, Toast, Workspace};
 use crate::client::Command;
-use crate::workspace::{LiveStatus, RecordFrom, StopRule, Tab};
+use crate::workspace::{LiveStatus, RecordFrom, SessionView, StopRule, Tab};
 
 /// Opens the native picker and loads the chosen recording.
 pub fn pick_file(mut ws: State<Workspace>) {
@@ -45,8 +45,8 @@ pub fn toggle_record(mut ws: State<Workspace>) {
 pub fn save_received(mut ws: State<Workspace>) {
     spawn_in_window(async move {
         let name = ws.peek().active().map_or_else(
-            || "recibido.sismo".into(),
-            |v| format!("{}-recibido.sismo", v.session.info.app),
+            || "sismo.sismo".into(),
+            |v| format!("{}.sismo", v.file_stem()),
         );
         let Some(path) =
             super::platform::save_path(tr!("dialog-save-received"), name, "sismo").await
@@ -212,16 +212,12 @@ impl Component for RecordDialog {
         let mut ws = self.0;
         let default_path = {
             let w = ws.peek();
-            let app = w
+            let stem = w
                 .active()
-                .map(|v| v.session.info.app.clone())
-                .unwrap_or_default();
-            let stamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs());
+                .map_or_else(|| "sismo".into(), SessionView::file_stem);
             w.prefs
                 .recordings_dir()
-                .join(format!("{app}-{stamp}.sismo"))
+                .join(format!("{stem}.sismo"))
                 .display()
                 .to_string()
         };
@@ -358,13 +354,13 @@ impl Component for ExportDialog {
         let base = ws
             .peek()
             .active()
-            .map_or_else(|| "sismo".into(), |v| v.session.info.app.clone());
+            .map_or_else(|| "sismo".into(), SessionView::file_stem);
         let export_dir = ws.peek().prefs.recordings_dir();
         let current = *format.read();
         let ext = FORMATS[current].0.extension();
         let mut path = use_state(move || {
             export_dir
-                .join(format!("{base}-export.pftrace"))
+                .join(format!("{base}.pftrace"))
                 .display()
                 .to_string()
         });

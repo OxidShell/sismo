@@ -28,7 +28,6 @@ mod registry;
 mod scope;
 mod sink;
 mod thread;
-mod time;
 
 #[cfg(feature = "alloc")]
 pub mod alloc;

@@ -150,6 +150,37 @@ pub struct SessionInfo {
     pub sismo_version: String,
 }
 
+impl SessionInfo {
+    /// File name stem `<app>-<version>-<platform>-<device>-<stamp>`, so
+    /// recordings of several apps and devices sort and never collide.
+    #[must_use]
+    pub fn file_stem(&self, stamp: crate::FileStamp) -> String {
+        let clean = |part: &str| -> String {
+            part.chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '.' || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect()
+        };
+        [
+            self.app.as_str(),
+            self.app_version.as_str(),
+            self.platform.as_str(),
+            self.device.as_str(),
+        ]
+        .into_iter()
+        .filter(|p| !p.is_empty())
+        .map(clean)
+        .chain(std::iter::once(stamp.to_string()))
+        .collect::<Vec<_>>()
+        .join("-")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadDef {
     pub id: u32,

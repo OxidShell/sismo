@@ -2,7 +2,8 @@ use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Nanoseconds since the Unix epoch, or zero when the clock is before it.
-pub(crate) fn unix_ns() -> u64 {
+#[must_use]
+pub fn unix_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
@@ -10,15 +11,19 @@ pub(crate) fn unix_ns() -> u64 {
 
 /// UTC timestamp rendered as `YYYYMMDD-HHMMSS`, for file names.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct FileStamp {
+pub struct FileStamp {
     unix_secs: u64,
 }
 
 impl FileStamp {
+    #[must_use]
     pub fn now() -> Self {
-        Self {
-            unix_secs: unix_ns() / 1_000_000_000,
-        }
+        Self::from_unix_secs(unix_ns() / 1_000_000_000)
+    }
+
+    #[must_use]
+    pub const fn from_unix_secs(unix_secs: u64) -> Self {
+        Self { unix_secs }
     }
 
     /// Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
@@ -63,5 +68,20 @@ mod tests {
             unix_secs: 1_793_318_853,
         };
         assert_eq!(stamp.to_string(), "20261030-000733");
+    }
+
+    #[test]
+    fn file_stem_names_app_version_platform_device_and_time() {
+        let info = crate::SessionInfo {
+            app: "notinplus".into(),
+            app_version: "0.1.0".into(),
+            platform: "android".into(),
+            device: "Lenovo TB373FU".into(),
+            ..crate::SessionInfo::default()
+        };
+        assert_eq!(
+            info.file_stem(FileStamp::from_unix_secs(1_793_318_853)),
+            "notinplus-0.1.0-android-Lenovo_TB373FU-20261030-000733"
+        );
     }
 }

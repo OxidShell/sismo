@@ -8,6 +8,7 @@ mod codec;
 mod filter;
 pub mod net;
 mod record;
+mod stamp;
 
 pub use chunk::{
     CHUNK_HEADER_LEN, CHUNK_MAGIC, Chunk, Codec, FILE_MAGIC, FileReader, FileWriter, MAX_CHUNK_LEN,
@@ -19,6 +20,7 @@ pub use record::{
     BatchWriter, CallsiteDef, CallsiteKind, Event, Level, Record, SessionInfo, Source, ThreadDef,
     decode_records,
 };
+pub use stamp::{FileStamp, unix_ns};
 
 /// Version byte written into every chunk header.
 pub const FORMAT_VERSION: u8 = 1;
