@@ -113,7 +113,11 @@ thread span lanes, zoom with W/S or the wheel, pan with A/D or drag),
 Flamegraph (aggregated icicle with callers/callees), Funciones (stats table
 with p95 history and worst calls), Logs and Métricas. Ctrl K opens the
 command palette, `?` lists shortcuts, Ctrl R records a live app, Ctrl E
-exports, Ctrl D compares.
+exports, Ctrl D compares. Ctrl , opens Settings (language, recordings folder, live
+window, trusted devices, per-app crate groups, shortcuts, CLI for agents).
+Right-click a span, flamegraph node or function for quick actions. The
+interface is available in Spanish and English (Fluent); “System” follows
+the desktop locale.
 
 ### Query syntax
 
@@ -129,6 +133,13 @@ Same in every tab and in the CLI (`-q`):
 | `range:5m`, `range:+10s..+20s` | last N of the session, or offsets |
 | `"gpu budget"`, `-crate:std`, `a OR b` | free text, negation, alternatives |
 | `find:"pairing"` | highlight without filtering |
+
+## Building
+
+The viewer uses [istmo](../istmo) for file dialogs, opening folders, per-user
+paths and the system locale. Until the locale plugin is published, the root
+`Cargo.toml` patches the istmo crates to a sibling checkout at
+`../istmo/istmo`.
 
 ## License
 
