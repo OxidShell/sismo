@@ -250,6 +250,9 @@ pub struct Session {
     pub events: u64,
     /// Whether the recording carries allocation counts.
     pub allocations: bool,
+    /// Records after a session record of another run are skipped: that run's
+    /// ids and timestamps mean other things.
+    foreign: bool,
 }
 
 impl Session {
@@ -292,12 +295,15 @@ impl Session {
         for record in records {
             match record {
                 Record::Session(info) => {
-                    if self.info.session_id == 0 || self.info.session_id == info.session_id {
+                    self.foreign =
+                        self.info.session_id != 0 && self.info.session_id != info.session_id;
+                    if !self.foreign {
                         self.groups.set_app(&info.app);
                         self.groups.add_app_crates(&info.app_crates);
                         self.info = info;
                     }
                 }
+                _ if self.foreign => {}
                 Record::Thread(def) => {
                     let index = self.thread_slot(def.id);
                     self.threads[index].name = def.name;
@@ -572,7 +578,12 @@ fn frame_start(spans: &[Span], previous: u64, end: u64) -> u64 {
     let first = spans.partition_point(|s| s.start < previous);
     let last = spans.partition_point(|s| s.start < end);
     let mut start = end;
-    for span in spans[first..last].iter().rev().filter(|s| s.depth == 0) {
+    // Spans are in begin order on one thread; a recording that repeats data
+    // can break that, so a slice that does not make sense means no frame.
+    let Some(window) = spans.get(first..last) else {
+        return end;
+    };
+    for span in window.iter().rev().filter(|s| s.depth == 0) {
         let span_end = if span.is_open() { end } else { span.end };
         if span_end.saturating_add(IDLE_GAP_NS) < start {
             break;
@@ -585,7 +596,7 @@ fn frame_start(spans: &[Span], previous: u64, end: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sismo_format::{CallsiteKind, ThreadDef};
+    use sismo_format::{CallsiteKind, SessionInfo, ThreadDef};
 
     fn def(id: u32, name: &str) -> Record {
         Record::Callsite(CallsiteDef {
@@ -655,6 +666,28 @@ mod tests {
         ]);
         assert_eq!(session.frames[0].start, 60_000);
         assert_eq!(session.frames[0].duration(), 5_000);
+    }
+
+    #[test]
+    fn records_of_another_run_are_skipped() {
+        let info = |id| {
+            Record::Session(SessionInfo {
+                session_id: id,
+                app: "app".into(),
+                ..SessionInfo::default()
+            })
+        };
+        let mut session = Session::default();
+        let work = |t| Record::Batch {
+            thread: 1,
+            events: vec![Event::Begin { t, callsite: 1 }, Event::End { t: t + 1 }],
+        };
+        session.ingest(vec![info(7), def(1, "app::work"), work(10)]);
+        session.ingest(vec![info(8), def(1, "other::thing"), work(2)]);
+        session.ingest(vec![info(7), work(20)]);
+        assert_eq!(session.info.session_id, 7);
+        assert_eq!(session.name(1), "app::work");
+        assert_eq!(session.thread(1).unwrap().spans.len(), 2);
     }
 
     #[test]
