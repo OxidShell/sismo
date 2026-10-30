@@ -11,7 +11,9 @@ use sismo_analysis::{ExportOptions, Format};
 
 use super::i18n::tr;
 use super::theme;
-use super::widgets::{Kind, bordered, button, caption, hline, kbd, mono, panel, scrim, text};
+use super::widgets::{
+    Kind, bordered, button, caption, hline, kbd, layers, mono, panel, scrim, text,
+};
 use super::{Dialog, Toast, Workspace};
 use crate::client::Command;
 use crate::workspace::{LiveStatus, RecordFrom, SessionView, StopRule, Tab};
@@ -895,7 +897,7 @@ pub fn toast(mut ws: State<Workspace>, toast: &Toast) -> Rect {
         .is_some_and(|p| p.extension().is_some_and(|e| e == "sismo"));
     rect()
         .position(Position::new_global().bottom(40.).right(16.))
-        .layer(Layer::Overlay)
+        .layer(Layer::OverlayLevel(layers::TOAST))
         .width(Size::px(420.))
         .padding(16.)
         .spacing(8.)

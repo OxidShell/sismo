@@ -447,6 +447,30 @@ fn shortcuts() -> Element {
         .into_element()
 }
 
+/// Settings floating over whatever screen is open; a click outside or
+/// Esc closes it.
+pub fn modal(mut ws: State<Workspace>) -> Rect {
+    rect()
+        .position(Position::new_global().top(0.).left(0.))
+        .width(Size::window_percent(100.))
+        .height(Size::window_percent(100.))
+        .layer(Layer::OverlayLevel(super::widgets::layers::SETTINGS))
+        .background(Color::from_argb(140, 0, 0, 0))
+        .center()
+        .on_press(move |_| ws.write().settings = None)
+        .child(
+            rect()
+                .width(Size::window_percent(86.))
+                .height(Size::window_percent(84.))
+                .corner_radius(8.)
+                .overflow(Overflow::Clip)
+                .background(theme::color(theme::BG0))
+                .border(super::widgets::bordered(theme::LINE2))
+                .on_press(|e: Event<PressEventData>| e.stop_propagation())
+                .child(SettingsScreen(ws)),
+        )
+}
+
 #[derive(PartialEq)]
 pub struct SettingsScreen(pub State<Workspace>);
 
@@ -476,7 +500,6 @@ impl Component for SettingsScreen {
                     .padding((0., 16.))
                     .spacing(16.)
                     .background(theme::color(theme::BG1))
-                    .child(text("sismo", 14., theme::TEXT).font_weight(600))
                     .child(
                         text(tr!("settings-title"), 13., theme::TEXT)
                             .font_weight(500)
@@ -532,7 +555,7 @@ impl Component for SettingsScreen {
                             .height(Size::fill())
                             .child(
                                 rect()
-                                    .width(Size::px(860.))
+                                    .width(Size::fill())
                                     .padding((32., 40.))
                                     .spacing(16.)
                                     .child(

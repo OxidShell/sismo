@@ -458,11 +458,11 @@ fn app() -> impl IntoElement {
     });
 
     let w = ws.read();
-    let screen = match (w.settings, w.active) {
-        (Some(_), _) => settings::SettingsScreen(ws).into_element(),
-        (None, Some(index)) => shell::session_screen(ws, index).into_element(),
-        (None, None) => sessions::sessions_screen(ws).into_element(),
+    let screen = match w.active {
+        Some(index) => shell::session_screen(ws, index).into_element(),
+        None => sessions::sessions_screen(ws).into_element(),
     };
+    let settings = w.settings.map(|_| settings::modal(ws));
     let menu = w.menu.map(|m| context_menu::render(ws, m));
     let dialog = w.dialog.as_ref().map(|d| dialogs::render(ws, d));
     let toast = w.toast.as_ref().map(|t| dialogs::toast(ws, t));
@@ -481,6 +481,7 @@ fn app() -> impl IntoElement {
             }
         })
         .child(screen)
+        .maybe_child(settings)
         .maybe_child(menu)
         .maybe_child(dialog)
         .maybe_child(toast)

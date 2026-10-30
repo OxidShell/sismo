@@ -5,7 +5,7 @@ use freya::prelude::*;
 
 use super::i18n::tr;
 use super::theme;
-use super::widgets::{bordered, kbd, mono, text};
+use super::widgets::{bordered, kbd, layers, mono, text};
 use super::{Dialog, Workspace};
 use crate::workspace::Tab;
 
@@ -183,7 +183,7 @@ pub fn render(mut ws: State<Workspace>, target: MenuTarget) -> Rect {
         .position(Position::new_global().top(0.).left(0.))
         .width(Size::window_percent(100.))
         .height(Size::window_percent(100.))
-        .layer(Layer::Overlay)
+        .layer(Layer::OverlayLevel(layers::MENU))
         .on_press(move |_| ws.write().menu = None)
         .on_secondary_down(move |_| ws.write().menu = None)
         .child(

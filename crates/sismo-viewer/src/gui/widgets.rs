@@ -173,7 +173,7 @@ pub fn scrim(
         .position(Position::new_global().top(0.).left(0.))
         .width(Size::window_percent(100.))
         .height(Size::window_percent(100.))
-        .layer(Layer::Overlay)
+        .layer(Layer::OverlayLevel(layers::DIALOG))
         .background(Color::from_argb(140, 0, 0, 0))
         .center()
         .on_press(on_close)
@@ -182,4 +182,13 @@ pub fn scrim(
                 .on_press(|e: Event<PressEventData>| e.stop_propagation())
                 .child(content),
         )
+}
+
+/// Overlay levels, bottom to top. Siblings on one level paint in no set
+/// order, so everything that can be open at once gets its own.
+pub mod layers {
+    pub const SETTINGS: u8 = 1;
+    pub const DIALOG: u8 = 2;
+    pub const MENU: u8 = 3;
+    pub const TOAST: u8 = 4;
 }
