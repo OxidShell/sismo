@@ -3,7 +3,7 @@
 
 pub mod export;
 mod groups;
-mod query;
+pub mod query;
 mod session;
 mod stats;
 pub mod units;

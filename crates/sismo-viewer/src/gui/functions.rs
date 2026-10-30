@@ -1,0 +1,387 @@
+//! Functions tab: per-callsite stats table and the selected row's history.
+
+use freya::prelude::*;
+use sismo_analysis::units::{Clock, Nanos};
+use sismo_analysis::{FunctionStats, SortBy};
+
+use super::Workspace;
+use super::theme;
+use super::timeline::{focus_frame, scene};
+use super::widgets::{Kind, button, caption, hline, mono, swatch, text, vline};
+use crate::workspace::{SessionView, Tab};
+
+const ROW_H: f32 = 28.;
+const BUCKETS: usize = 40;
+
+/// Column: header, sort key, width, right aligned.
+const COLUMNS: [(&str, Option<SortBy>, f32); 7] = [
+    ("Llamadas", Some(SortBy::Calls), 80.),
+    ("Total", Some(SortBy::Total), 86.),
+    ("Propio", Some(SortBy::SelfTime), 86.),
+    ("p50", None, 76.),
+    ("p95", Some(SortBy::P95), 76.),
+    ("Máx", Some(SortBy::Max), 76.),
+    ("Histórico p95", None, 176.),
+];
+
+fn cells(row: &FunctionStats) -> [String; 6] {
+    [
+        row.calls.to_string(),
+        Nanos(row.total_ns).to_string(),
+        Nanos(row.self_ns).to_string(),
+        Nanos(row.p50_ns).to_string(),
+        Nanos(row.p95_ns).to_string(),
+        Nanos(row.max_ns).to_string(),
+    ]
+}
+
+fn sparkline(history: &[u64], rgb: theme::Rgb) -> RenderCallback {
+    let history = history.to_vec();
+    scene(160., 20., move |p, w, h| {
+        let max = history.iter().copied().max().unwrap_or(1).max(1);
+        #[allow(clippy::cast_precision_loss)]
+        let step = w / history.len().max(1) as f32;
+        let median = {
+            let mut sorted: Vec<u64> = history.iter().copied().filter(|v| *v > 0).collect();
+            sorted.sort_unstable();
+            sismo_analysis::percentile(&sorted, 0.5)
+        };
+        for (i, v) in history.iter().enumerate() {
+            #[allow(clippy::cast_precision_loss)]
+            let bh = (*v as f32 / max as f32 * (h - 2.)).max(if *v > 0 { 1. } else { 0. });
+            let spike = median > 0 && *v > median.saturating_mul(2);
+            #[allow(clippy::cast_precision_loss)]
+            let x = i as f32 * step;
+            p.rect_alpha(
+                x,
+                h - bh,
+                (step - 1.).max(1.),
+                bh,
+                if spike { theme::WARN } else { rgb },
+                210,
+            );
+        }
+    })
+}
+
+fn header(mut ws: State<Workspace>, sort: SortBy) -> Rect {
+    rect()
+        .width(Size::fill())
+        .height(Size::px(32.))
+        .horizontal()
+        .content(Content::flex())
+        .cross_align(Alignment::Center)
+        .padding((0., 16.))
+        .background(theme::color(theme::BG1))
+        .child(
+            rect()
+                .width(Size::flex(1.))
+                .cursor(CursorIcon::Pointer)
+                .on_press(move |_| {
+                    if let Some(v) = ws.write().active_mut() {
+                        v.sort = SortBy::Name;
+                    }
+                })
+                .child(
+                    text(
+                        "Función",
+                        11.,
+                        if sort == SortBy::Name {
+                            theme::TEXT
+                        } else {
+                            theme::TEXT3
+                        },
+                    )
+                    .font_weight(600),
+                ),
+        )
+        .children(COLUMNS.iter().map(|(title, key, width)| {
+            let on = key.is_some_and(|k| k == sort);
+            let key = *key;
+            rect()
+                .width(Size::px(*width))
+                .main_align(if title.starts_with("Hist") {
+                    Alignment::Start
+                } else {
+                    Alignment::End
+                })
+                .horizontal()
+                .padding((0., 0., 0., 12.))
+                .maybe(key.is_some(), |r| r.cursor(CursorIcon::Pointer))
+                .on_press(move |_| {
+                    if let (Some(key), Some(v)) = (key, ws.write().active_mut()) {
+                        v.sort = key;
+                    }
+                })
+                .child(
+                    text(
+                        if on {
+                            format!("{title} ▼")
+                        } else {
+                            (*title).to_owned()
+                        },
+                        11.,
+                        if on { theme::TEXT } else { theme::TEXT3 },
+                    )
+                    .font_weight(600),
+                )
+                .into_element()
+        }))
+}
+
+fn detail(mut ws: State<Workspace>, view: &SessionView, row: &FunctionStats) -> Rect {
+    let session = &view.session;
+    let rgb = theme::group(row.group);
+    let worst: Vec<(u64, u64, u32)> = session
+        .calls_of(row.callsite, view.window())
+        .into_iter()
+        .take(8)
+        .collect();
+    let history = row.history_p95_ns.clone();
+    let window = view.window();
+    let chart = scene(348., 120., move |p, w, h| {
+        p.rect(0., 0., w, h, theme::BG0);
+        let max = history.iter().copied().max().unwrap_or(1).max(1);
+        #[allow(clippy::cast_precision_loss)]
+        let step = w / history.len().saturating_sub(1).max(1) as f32;
+        #[allow(clippy::cast_precision_loss)]
+        let points: Vec<(f32, f32)> = history
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                (
+                    i as f32 * step,
+                    h - 12. - *v as f32 / max as f32 * (h - 28.),
+                )
+            })
+            .collect();
+        p.polyline(&points, 2., rgb);
+        p.text("p95", 6., 4., 10., rgb, true, 30.);
+        p.text(
+            &Nanos(max).to_string(),
+            w - 70.,
+            4.,
+            10.,
+            theme::TEXT3,
+            true,
+            66.,
+        );
+        p.text(
+            &Clock(window.0).to_string(),
+            4.,
+            h - 12.,
+            10.,
+            theme::TEXT3,
+            true,
+            80.,
+        );
+        let end = Clock(window.1).to_string();
+        p.text(&end, w - 64., h - 12., 10., theme::TEXT3, true, 64.);
+    });
+    let callsite = row.callsite;
+    rect()
+        .width(Size::px(380.))
+        .height(Size::fill())
+        .padding(16.)
+        .spacing(10.)
+        .background(theme::color(theme::BG1))
+        .child(
+            rect()
+                .horizontal()
+                .spacing(8.)
+                .cross_align(Alignment::Center)
+                .child(swatch(rgb, 10., 2.))
+                .child(mono(row.name.clone(), 13., theme::TEXT).font_weight(600)),
+        )
+        .child(mono(
+            format!(
+                "{}:{} · {} ({})",
+                row.file,
+                row.line,
+                row.krate,
+                theme::group_label(row.group)
+            ),
+            11.,
+            theme::TEXT3,
+        ))
+        .child(caption("Histórico · p95 por tramo"))
+        .child(
+            rect()
+                .width(Size::px(348.))
+                .height(Size::px(120.))
+                .corner_radius(4.)
+                .background(chart),
+        )
+        .child(caption("Peores llamadas"))
+        .children(worst.into_iter().map(|(duration, start, thread)| {
+            let frame = session.frames.partition_point(|f| f.end <= start);
+            let frame_index = session
+                .frames
+                .get(frame)
+                .filter(|f| f.start <= start)
+                .map(|f| f.index);
+            let thread_name = session.thread_name(thread).to_owned();
+            rect()
+                .width(Size::fill())
+                .horizontal()
+                .content(Content::flex())
+                .spacing(10.)
+                .padding((6., 8.))
+                .corner_radius(3.)
+                .cursor(CursorIcon::Pointer)
+                .on_press(move |_| {
+                    if let Some(v) = ws.write().active_mut() {
+                        if let Some(index) = frame_index {
+                            focus_frame(v, index);
+                        } else {
+                            v.view = (start.saturating_sub(duration), start + duration * 2);
+                            v.follow = false;
+                        }
+                        v.tab = Tab::Timeline;
+                    }
+                })
+                .child(mono(Clock(start).to_string(), 12., theme::TEXT2))
+                .child(mono(Nanos(duration).to_string(), 12., theme::TEXT).width(Size::flex(1.)))
+                .child(mono(
+                    frame_index.map_or_else(|| thread_name.clone(), |i| format!("frame #{i} ↗")),
+                    12.,
+                    theme::TEXT3,
+                ))
+                .into_element()
+        }))
+        .child(text(
+            "Clic en una llamada = abrirla en el Timeline",
+            11.,
+            theme::TEXT3,
+        ))
+        .child(button(
+            "Filtrar a esta función",
+            Kind::Secondary,
+            move |_| {
+                let mut w = ws.write();
+                let Some(v) = w.active_mut() else { return };
+                let name = v.session.name(callsite).to_owned();
+                v.set_query(format!("fn:{name}"));
+            },
+        ))
+}
+
+pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
+    let session = &view.session;
+    let query = view.effective_query();
+    let rows = session.functions(&query, view.window(), BUCKETS, view.sort);
+    let total_functions = session
+        .callsites()
+        .filter(|c| c.kind == sismo_format::CallsiteKind::Span)
+        .count();
+    let selected = view.selected_function;
+    let detail_row = selected.and_then(|id| rows.iter().find(|r| r.callsite == id).cloned());
+    let count = rows.len();
+
+    let list = VirtualScrollView::new_with_data(
+        (rows, selected),
+        move |item, (rows, selected): &(Vec<FunctionStats>, Option<u32>)| {
+            let selected = *selected;
+            let Some(row) = rows.get(item.index) else {
+                return rect().into_element();
+            };
+            let rgb = theme::group(row.group);
+            let callsite = row.callsite;
+            let on = selected == Some(callsite);
+            rect()
+                .key(callsite)
+                .width(Size::fill())
+                .height(Size::px(ROW_H))
+                .horizontal()
+                .content(Content::flex())
+                .cross_align(Alignment::Center)
+                .padding((0., 16.))
+                .background(theme::color(if on { theme::BG3 } else { theme::BG0 }))
+                .cursor(CursorIcon::Pointer)
+                .on_press(move |_| {
+                    if let Some(v) = ws.write().active_mut() {
+                        v.selected_function = Some(callsite);
+                    }
+                })
+                .child(
+                    rect()
+                        .width(Size::flex(1.))
+                        .horizontal()
+                        .spacing(8.)
+                        .cross_align(Alignment::Center)
+                        .child(swatch(rgb, 6., 1.))
+                        .child(mono(row.name.clone(), 12., theme::TEXT)),
+                )
+                .children(cells(row).into_iter().enumerate().map(|(i, value)| {
+                    rect()
+                        .width(Size::px(COLUMNS[i].2))
+                        .horizontal()
+                        .main_align(Alignment::End)
+                        .child(mono(
+                            value,
+                            12.,
+                            if i == 2 { theme::TEXT } else { theme::TEXT2 },
+                        ))
+                        .into_element()
+                }))
+                .child(
+                    rect()
+                        .width(Size::px(176.))
+                        .padding((0., 0., 0., 16.))
+                        .child(
+                            rect()
+                                .width(Size::px(160.))
+                                .height(Size::px(20.))
+                                .background(sparkline(&row.history_p95_ns, rgb)),
+                        ),
+                )
+                .into_element()
+        },
+    )
+    .length(count)
+    .item_size(ROW_H)
+    .height(Size::flex(1.));
+
+    let empty = (count == 0).then(|| {
+        rect()
+            .width(Size::fill())
+            .padding(24.)
+            .spacing(8.)
+            .child(
+                text(format!("Nada con «{}»", view.query_text), 13., theme::TEXT).font_weight(600),
+            )
+            .child(text(
+                "Quita el término más estricto o amplía el rango.",
+                12.,
+                theme::TEXT2,
+            ))
+            .child(button("Limpiar consulta", Kind::Secondary, move |_| {
+                if let Some(v) = ws.write().active_mut() {
+                    v.set_query(String::new());
+                }
+            }))
+    });
+
+    rect()
+        .expanded()
+        .horizontal()
+        .content(Content::flex())
+        .child(
+            rect()
+                .width(Size::flex(1.))
+                .height(Size::fill())
+                .content(Content::flex())
+                .child(header(ws, view.sort))
+                .child(hline())
+                .maybe_child(empty)
+                .child(list)
+                .child(hline())
+                .child(rect().padding((8., 16.)).child(text(
+                    format!("{count} de {total_functions} funciones · clic en la cabecera ordena · Enter abre el detalle"),
+                    11.,
+                    theme::TEXT3,
+                ))),
+        )
+        .maybe(detail_row.is_some(), |r| r.child(vline()))
+        .maybe_child(detail_row.map(|row| detail(ws, view, &row)))
+}
