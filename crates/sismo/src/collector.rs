@@ -61,7 +61,7 @@ impl Collector {
                         self.opened = Instant::now();
                     }
                     self.pending.raw(&bytes);
-                    if self.pending.len() >= SEAL_BYTES {
+                    if self.pending.len() >= SEAL_BYTES || self.opened.elapsed() >= SEAL_INTERVAL {
                         self.seal();
                     }
                 }

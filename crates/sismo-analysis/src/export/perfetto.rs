@@ -64,12 +64,17 @@ impl Proto {
 
 struct Writer<'a> {
     out: &'a mut dyn Write,
+    first: bool,
 }
 
 impl Writer<'_> {
     /// Wraps a `TracePacket` as field 1 of `Trace` and writes it.
     fn packet(&mut self, packet: &mut Proto) -> io::Result<()> {
         packet.uint(10, SEQUENCE);
+        if std::mem::take(&mut self.first) {
+            // SEQ_INCREMENTAL_STATE_CLEARED: lets trace processors accept the sequence.
+            packet.uint(13, 1);
+        }
         let mut trace = Proto::default();
         trace.message(1, packet);
         self.out.write_all(&trace.0)
@@ -103,7 +108,7 @@ pub(super) fn write(
     (from, to): (u64, u64),
     out: &mut dyn Write,
 ) -> io::Result<()> {
-    let mut w = Writer { out };
+    let mut w = Writer { out, first: true };
     let pid = u64::from(session.info.pid);
     let mut process = Proto::default();
     process.uint(1, pid).string(

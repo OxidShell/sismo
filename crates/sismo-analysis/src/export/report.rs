@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use super::Summary;
 use crate::groups::Group;
-use crate::units::{Nanos, Percent};
+use crate::units::{Clock, Nanos, Percent};
 
 /// Renders a summary as Markdown, ready for an issue or a PR.
 pub(super) fn render(s: &Summary) -> String {
@@ -49,7 +49,7 @@ pub(super) fn render(s: &Summary) -> String {
             let _ = writeln!(
                 out,
                 "- `{}` at {} on {}: {}",
-                Nanos(p.t_ns),
+                Clock(p.t_ns),
                 p.location,
                 p.thread,
                 p.message
@@ -90,7 +90,7 @@ pub(super) fn render(s: &Summary) -> String {
                 out,
                 "- #{} at {}: {} (app {} · framework {}) — {}",
                 frame.index,
-                Nanos(frame.start_ns),
+                Clock(frame.start_ns),
                 Nanos(frame.duration_ns),
                 Percent(frame.split.percent(Group::App)),
                 Percent(frame.split.percent(Group::Framework)),
@@ -108,7 +108,7 @@ pub(super) fn render(s: &Summary) -> String {
         let _ = writeln!(
             out,
             "- `{}` **{}** {} ({}): {}",
-            Nanos(line.t_ns),
+            Clock(line.t_ns),
             line.level,
             line.target,
             line.source,
@@ -118,7 +118,7 @@ pub(super) fn render(s: &Summary) -> String {
     if !s.markers.is_empty() {
         let _ = writeln!(out, "\n## Markers\n");
         for m in &s.markers {
-            let _ = writeln!(out, "- `{}` {}", Nanos(m.t_ns), m.note);
+            let _ = writeln!(out, "- `{}` {}", Clock(m.t_ns), m.note);
         }
     }
     out
