@@ -41,3 +41,7 @@ workspace = true
 [[example]]
 name = "demo"
 required-features = ["log"]
+
+[[test]]
+name = "record"
+required-features = ["log"]

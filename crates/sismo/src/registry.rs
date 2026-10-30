@@ -44,6 +44,13 @@ struct Definitions {
 pub(crate) struct Registry {
     start: Instant,
     defs: Mutex<Definitions>,
+    #[cfg_attr(
+        not(any(feature = "log", feature = "tracing", feature = "stdio")),
+        allow(
+            dead_code,
+            reason = "only the log, tracing and stdio bridges add runtime callsites"
+        )
+    )]
     dynamic: RwLock<HashMap<DynamicKey, u32>>,
     filter: RwLock<Filter>,
     next_callsite: AtomicU32,
@@ -129,6 +136,13 @@ impl Registry {
 
     /// Interns a callsite known only at runtime (log records, tracing
     /// metadata, stdio lines).
+    #[cfg_attr(
+        not(any(feature = "log", feature = "tracing", feature = "stdio")),
+        allow(
+            dead_code,
+            reason = "only the log, tracing and stdio bridges add runtime callsites"
+        )
+    )]
     pub fn register_dynamic(&self, key: DynamicKey, module_path: &str, level: Level) -> u32 {
         if let Some(id) = self
             .dynamic
@@ -194,6 +208,13 @@ impl Registry {
             .clone()
     }
 
+    #[cfg_attr(
+        not(any(feature = "log", feature = "tracing", feature = "stdio")),
+        allow(
+            dead_code,
+            reason = "only the log, tracing and stdio bridges add runtime callsites"
+        )
+    )]
     pub fn allows(&self, target: &str, level: Level) -> bool {
         self.filter
             .read()

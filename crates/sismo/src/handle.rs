@@ -1,8 +1,10 @@
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "net")]
+use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, SyncSender};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use sismo_format::{Filter, FilterError, SessionInfo};
