@@ -1,7 +1,7 @@
 use std::cell::RefCell;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError};
+use std::sync::{PoisonError, RwLock};
 
 use sismo_format::{BatchWriter, Encoder};
 
@@ -13,16 +13,20 @@ const FLUSH_BYTES: usize = 32 * 1024;
 /// Flush when this many nanoseconds passed since the last flush.
 const FLUSH_INTERVAL_NS: u64 = 50_000_000;
 
-static SENDER: OnceLock<SyncSender<Message>> = OnceLock::new();
+static SENDER: RwLock<Option<SyncSender<Message>>> = RwLock::new(None);
 /// Batches lost because the collector queue was full.
 pub(crate) static DROPPED: AtomicU64 = AtomicU64::new(0);
 
-pub(crate) fn install_sender(sender: SyncSender<Message>) -> bool {
-    SENDER.set(sender).is_ok()
+/// Points every thread at a new collector, or at none.
+pub(crate) fn set_sender(sender: Option<SyncSender<Message>>) {
+    *SENDER.write().unwrap_or_else(PoisonError::into_inner) = sender;
 }
 
-pub(crate) fn sender() -> Option<&'static SyncSender<Message>> {
-    SENDER.get()
+fn sender() -> Option<SyncSender<Message>> {
+    SENDER
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
 }
 
 struct ThreadBuffer {

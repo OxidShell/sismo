@@ -16,6 +16,11 @@ fn message(info: &PanicHookInfo<'_>) -> String {
 /// Records panics, flushes them and dumps the flight recorder before the
 /// previous hook runs.
 pub(crate) fn install_hook() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(chain_hook);
+}
+
+fn chain_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let location = info

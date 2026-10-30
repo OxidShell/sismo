@@ -10,8 +10,13 @@ use crate::registry::{DynamicKey, registry};
 use crate::thread;
 
 /// Redirects stdout and stderr through pipes; a reader thread per stream
-/// records each line and copies it to the original descriptor.
+/// records each line and copies it to the original descriptor. Lines are
+/// only recorded while sismo is active, so this runs once per process.
 pub(crate) fn capture() -> io::Result<()> {
+    static CAPTURED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if CAPTURED.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return Ok(());
+    }
     for (fd, source, name) in [(1, Source::Stdout, "stdout"), (2, Source::Stderr, "stderr")] {
         let (read_end, original) = redirect(fd)?;
         let callsite = registry().register_dynamic(

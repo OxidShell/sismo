@@ -432,15 +432,22 @@ pub(crate) fn start(config: &LiveConfig, handle: &Handle) -> io::Result<NetHandl
         .name("sismo-net".into())
         .spawn(move || {
             runtime.block_on(async move {
-                let socket = Zudp::default()
-                    .port(port)
-                    .sent_buffer(8192)
-                    .security(Keypair {
-                        public: identity.keypair.public,
-                        private: identity.keypair.private,
-                    })
-                    .listen::<RawBytes>()
-                    .await;
+                let listen = |port: u16| {
+                    Zudp::default()
+                        .port(port)
+                        .sent_buffer(8192)
+                        .security(Keypair {
+                            public: identity.keypair.public,
+                            private: identity.keypair.private,
+                        })
+                        .listen::<RawBytes>()
+                };
+                // The port may still be held by a session that just stopped;
+                // viewers find any port through discovery.
+                let socket = match listen(port).await {
+                    Ok(socket) => Ok(socket),
+                    Err(_) => listen(0).await,
+                };
                 let mut socket = match socket {
                     Ok(socket) => socket,
                     Err(error) => {

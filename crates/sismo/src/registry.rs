@@ -71,10 +71,16 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Registry {
+    /// Starts a session: the next collector receives it followed by every
+    /// thread and callsite known so far, so a reinstall keeps its names.
     pub fn set_session(&self, session: SessionInfo) {
         let mut defs = lock(&self.defs);
-        defs.pending.push(Record::Session(session.clone()));
         defs.session = session;
+        let mut pending = Vec::with_capacity(1 + defs.threads.len() + defs.callsites.len());
+        pending.push(Record::Session(defs.session.clone()));
+        pending.extend(defs.threads.iter().cloned().map(Record::Thread));
+        pending.extend(defs.callsites.iter().cloned().map(Record::Callsite));
+        defs.pending = pending;
     }
 
     pub fn session(&self) -> SessionInfo {

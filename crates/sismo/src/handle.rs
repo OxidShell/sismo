@@ -2,7 +2,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, SyncSender};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::time::Duration;
 
 use sismo_format::{Filter, FilterError, SessionInfo};
@@ -11,7 +11,7 @@ use crate::collector::{Collector, Message};
 use crate::config::Config;
 use crate::registry::{ACTIVE, registry};
 use crate::sink::{RingBuffer, RotatingFile, lock};
-use crate::thread::{self, install_sender};
+use crate::thread::{self, set_sender};
 use crate::time::{FileStamp, unix_ns};
 
 /// Reasons [`install`] can fail.
@@ -42,7 +42,9 @@ pub(crate) struct Shared {
     pub net: OnceLock<crate::net::NetHandle>,
 }
 
-static HANDLE: OnceLock<Handle> = OnceLock::new();
+static HANDLE: RwLock<Option<Handle>> = RwLock::new(None);
+/// Serializes [`install`] and [`Handle::shutdown`].
+static LIFECYCLE: Mutex<()> = Mutex::new(());
 
 /// Control surface of the installed recorder. Cheap to clone.
 #[derive(Clone)]
@@ -60,8 +62,11 @@ impl std::fmt::Debug for Handle {
 
 /// The installed recorder, if any.
 #[must_use]
-pub fn handle() -> Option<&'static Handle> {
-    HANDLE.get()
+pub fn handle() -> Option<Handle> {
+    HANDLE
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
 }
 
 fn session_id(seed: u64) -> u64 {
@@ -72,15 +77,23 @@ fn session_id(seed: u64) -> u64 {
     hasher.finish()
 }
 
-/// Installs the global recorder and starts its collector thread.
+/// Installs the global recorder and starts its collector thread. After
+/// [`Handle::shutdown`] it can be installed again, as a new session.
 ///
 /// # Errors
 /// [`InstallError`] when already installed, misconfigured or a thread or
 /// socket cannot start.
 pub fn install(config: Config) -> Result<Handle, InstallError> {
-    if HANDLE.get().is_some() {
+    let _lifecycle = LIFECYCLE.lock().unwrap_or_else(PoisonError::into_inner);
+    if handle().is_some() {
         return Err(InstallError::AlreadyInstalled);
     }
+    let handle = start(config)?;
+    *HANDLE.write().unwrap_or_else(PoisonError::into_inner) = Some(handle.clone());
+    Ok(handle)
+}
+
+fn start(config: Config) -> Result<Handle, InstallError> {
     if !config.any_sink() {
         return Err(InstallError::NoSink);
     }
@@ -112,9 +125,6 @@ pub fn install(config: Config) -> Result<Handle, InstallError> {
         .name("sismo-collector".into())
         .spawn(move || collector.run())
         .map_err(InstallError::Spawn)?;
-    if !install_sender(sender.clone()) {
-        return Err(InstallError::AlreadyInstalled);
-    }
 
     if let Some(record) = &config.record {
         let sink = RotatingFile::new(
@@ -136,9 +146,19 @@ pub fn install(config: Config) -> Result<Handle, InstallError> {
             net: OnceLock::new(),
         }),
     };
-    if HANDLE.set(handle.clone()).is_err() {
-        return Err(InstallError::AlreadyInstalled);
+    #[cfg(feature = "net")]
+    if let Some(live) = &config.live {
+        match crate::net::start(live, &handle) {
+            Ok(net) => {
+                let _ = handle.shared.net.set(net);
+            }
+            Err(error) => {
+                handle.stop_collector();
+                return Err(InstallError::Net(error));
+            }
+        }
     }
+    set_sender(Some(handle.shared.sender.clone()));
     ACTIVE.store(true, Ordering::Release);
 
     if config.capture_panics {
@@ -147,11 +167,6 @@ pub fn install(config: Config) -> Result<Handle, InstallError> {
     #[cfg(all(feature = "stdio", unix))]
     if config.capture_stdio {
         crate::stdio::capture().map_err(InstallError::Stdio)?;
-    }
-    #[cfg(feature = "net")]
-    if let Some(live) = &config.live {
-        let net = crate::net::start(live, &handle).map_err(InstallError::Net)?;
-        let _ = handle.shared.net.set(net);
     }
     Ok(handle)
 }
@@ -251,10 +266,24 @@ impl Handle {
         thread::DROPPED.load(Ordering::Relaxed)
     }
 
-    /// Stops recording and flushes every sink.
+    /// Stops recording, flushes every sink and stops streaming. The
+    /// recorder can be installed again afterwards.
     pub fn shutdown(&self) {
+        let _lifecycle = LIFECYCLE.lock().unwrap_or_else(PoisonError::into_inner);
         thread::flush_current();
         ACTIVE.store(false, Ordering::Release);
+        set_sender(None);
+        self.stop_collector();
+        let mut installed = HANDLE.write().unwrap_or_else(PoisonError::into_inner);
+        if installed
+            .as_ref()
+            .is_some_and(|h| Arc::ptr_eq(&h.shared, &self.shared))
+        {
+            *installed = None;
+        }
+    }
+
+    fn stop_collector(&self) {
         let (reply, done) = mpsc::sync_channel(1);
         if self.shared.sender.send(Message::Shutdown(reply)).is_ok() {
             let _ = done.recv_timeout(Duration::from_secs(5));
