@@ -388,8 +388,8 @@ fn handle_shortcut(mut ws: State<Workspace>, event: &KeyboardEventData) {
             }
             " " => {
                 if let Some(view) = ws.write().active_mut() {
-                    view.paused = !view.paused;
-                    view.follow = !view.paused;
+                    let paused = !view.paused;
+                    view.set_paused(paused);
                 }
             }
             "w" | "s" | "a" | "d" => {
@@ -621,6 +621,17 @@ mod live_snapshot {
                 "sismo-live-{}.png",
                 tab.label().trim_start_matches("tab-")
             )));
+            if tab == Tab::Timeline {
+                // Paused: nothing on screen moves while data keeps arriving.
+                runner.press_key(Key::Character(" ".into()));
+                runner.poll(Duration::from_millis(100), Duration::from_millis(500));
+                runner.render_to_file(dir.join("sismo-live-paused-a.png"));
+                runner.poll(Duration::from_millis(100), Duration::from_secs(2));
+                runner.render_to_file(dir.join("sismo-live-paused-b.png"));
+                runner.press_key(Key::Character(" ".into()));
+                runner.poll(Duration::from_millis(100), Duration::from_secs(1));
+                runner.render_to_file(dir.join("sismo-live-resumed.png"));
+            }
             if tab == Tab::Logs {
                 // Scrolling up by hand stops following the newest line.
                 runner.scroll((700., 300.), (0., 400.));

@@ -115,6 +115,9 @@ pub struct Live {
     pub rtt: Option<Duration>,
     /// Every chunk received, so a recording can include what came before.
     pub received: Vec<Vec<u8>>,
+    /// How many of `received` the session has applied; the rest arrived
+    /// while paused.
+    pub applied: usize,
     pub received_bytes: u64,
     pub recording: Option<Recording>,
     pub device_upload: Option<(PathBuf, Vec<u8>, u64)>,
@@ -243,6 +246,7 @@ impl SessionView {
             history_bytes: 0,
             rtt: None,
             received: Vec::new(),
+            applied: 0,
             received_bytes: 0,
             recording: None,
             device_upload: None,
@@ -289,16 +293,34 @@ impl SessionView {
         }
     }
 
+    /// Pauses or resumes a live session. While paused nothing new is shown
+    /// (it is still received, recorded and saved); resuming applies it all.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+        self.follow = !paused;
+        if !paused && let Origin::Live(live) = &mut self.origin {
+            ingest_pending(&mut self.session, &live.received, &mut live.applied);
+            if self.selection.is_none() {
+                let (start, end) = self.session.span();
+                let width = self.view.1.saturating_sub(self.view.0).max(1_000_000);
+                self.view = (end.saturating_sub(width).max(start), end.max(start + 1));
+            }
+        }
+        self.revision += 1;
+    }
+
     /// Drops the picked range: a live session follows its latest seconds
     /// again, a recording shows everything.
     pub fn reset_view(&mut self) {
         self.selection = None;
         self.selected_frame = None;
+        if self.live().is_some() {
+            self.set_paused(false);
+        }
         let (start, end) = self.session.span();
         if self.live().is_some() {
             self.follow = true;
             self.logs_follow = true;
-            self.paused = false;
             self.view = (
                 end.saturating_sub(self.live_window_ns).max(start),
                 end.max(start + 1),
@@ -445,12 +467,15 @@ impl SessionView {
                     {
                         let _ = recording.writer.write_chunk(&chunk);
                     }
-                    let before = self.session.events;
-                    if self.session.ingest_chunk(bytes.clone()).is_ok() {
-                        changed = true;
-                    }
-                    live.rate_window.1 += self.session.events - before;
                     live.received.push(bytes);
+                    // Paused: keep what arrives without showing it, so the
+                    // screen stays exactly as it was until resumed.
+                    if !self.paused {
+                        let before = self.session.events;
+                        changed |=
+                            ingest_pending(&mut self.session, &live.received, &mut live.applied);
+                        live.rate_window.1 += self.session.events - before;
+                    }
                 }
                 ClientEvent::HistoryEnd => changed = true,
                 ClientEvent::Filter(filter) => live.app_filter = filter,
@@ -478,7 +503,8 @@ impl SessionView {
             }
         }
         let elapsed = live.rate_window.0.elapsed();
-        if elapsed >= Duration::from_secs(1) {
+        // While paused nothing is decoded; keep showing the last rate.
+        if elapsed >= Duration::from_secs(1) && !self.paused {
             #[allow(clippy::cast_precision_loss)]
             let rate = live.rate_window.1 as f64 / elapsed.as_secs_f64();
             live.events_per_sec = rate;
@@ -626,6 +652,7 @@ impl SessionView {
             return Ok(());
         };
         live.received = vec![definitions.into_bytes()];
+        live.applied = live.received.len();
         live.received_bytes = 0;
         self.session.clear_events();
         self.selected_span = None;
@@ -660,4 +687,15 @@ pub fn recordings_dir() -> PathBuf {
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map_or_else(|| PathBuf::from("."), PathBuf::from)
         .join("sismo")
+}
+
+/// Applies the chunks of `received` past `applied`; returns whether any
+/// decoded.
+fn ingest_pending(session: &mut Session, received: &[Vec<u8>], applied: &mut usize) -> bool {
+    let mut changed = false;
+    for bytes in &received[(*applied).min(received.len())..] {
+        changed |= session.ingest_chunk(bytes.clone()).is_ok();
+    }
+    *applied = received.len();
+    changed
 }

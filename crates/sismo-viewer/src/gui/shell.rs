@@ -137,8 +137,8 @@ fn top_bar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                 Kind::Secondary,
                 move |_| {
                     if let Some(view) = ws.write().active_mut() {
-                        view.paused = !view.paused;
-                        view.follow = !view.paused;
+                        let paused = !view.paused;
+                        view.set_paused(paused);
                     }
                 },
             ))
