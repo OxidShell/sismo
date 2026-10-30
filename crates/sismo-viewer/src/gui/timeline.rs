@@ -148,6 +148,55 @@ impl Scale {
     }
 }
 
+thread_local! {
+    /// Main function of unnamed threads, keyed by session, thread and span count.
+    static LABELS: RefCell<HashMap<(u64, u32), (usize, String)>> = RefCell::new(HashMap::new());
+}
+
+/// Name to show for a thread. Threads the app did not name (`ThreadId(7)`,
+/// `thread-7`) say what they mostly run, and the thread that marks frames
+/// says so, since that is where the UI work lives.
+pub fn thread_label(session: &Session, id: u32) -> String {
+    let Some(thread) = session.thread(id) else {
+        return session.thread_name(id).to_owned();
+    };
+    let name = thread.name.as_str();
+    let frames = session.frame_thread() == Some(id);
+    let unnamed = name.starts_with("ThreadId(") || name.starts_with("thread-");
+    if frames {
+        return format!("{name} · {}", tr!("timeline-frames-thread"));
+    }
+    if !unnamed || thread.spans.is_empty() {
+        return name.to_owned();
+    }
+    let key = (session.info.session_id, id);
+    LABELS.with(|cell| {
+        let mut map = cell.borrow_mut();
+        if let Some((count, label)) = map.get(&key)
+            && *count == thread.spans.len()
+        {
+            return label.clone();
+        }
+        let mut per_callsite: HashMap<u32, u64> = HashMap::new();
+        for span in thread.spans.iter().filter(|s| s.depth == 0) {
+            *per_callsite.entry(span.callsite).or_default() += span.duration(session.end);
+        }
+        let label = per_callsite
+            .into_iter()
+            .max_by_key(|(_, ns)| *ns)
+            .map_or_else(
+                || name.to_owned(),
+                |(callsite, _)| {
+                    let function = session.name(callsite);
+                    let short = function.split_once("::").map_or(function, |(_, rest)| rest);
+                    format!("{name} · {short}")
+                },
+            );
+        map.insert(key, (thread.spans.len(), label.clone()));
+        label
+    })
+}
+
 /// Vertical placement of one thread lane.
 #[derive(Debug, Clone)]
 struct Lane {
@@ -175,7 +224,7 @@ fn lanes(view: &SessionView) -> (Vec<Lane>, f32) {
         }
         out.push(Lane {
             thread: thread.id,
-            name: thread.name.clone(),
+            name: thread_label(&view.session, thread.id),
             top: y + 18.,
             rows,
         });

@@ -117,6 +117,7 @@ timeline-allocs = Allocs
 timeline-open-in-flamegraph = Abrir en Flamegraph
 timeline-session-calls = En la sesión · { $count } llamadas · p50 { $p50 } · p95 { $p95 } · max { $max }
 timeline-frames = Frames
+timeline-frames-thread = frames
 timeline-frames-summary = { $count } frames   p50 { $p50 }   p95 { $p95 }   > 16.6 ms: { $slow }
 timeline-hint-live = arrastrar en frames = elegir rango · clic derecho = volver a vivo · rueda = zoom · arrastrar carriles = mover
 timeline-hint-file = arrastrar en frames = elegir rango · clic derecho = ver todo · rueda = zoom · arrastrar carriles = mover

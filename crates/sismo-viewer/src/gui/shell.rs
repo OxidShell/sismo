@@ -296,7 +296,7 @@ fn side_panel(mut ws: State<Workspace>, view: &SessionView) -> Rect {
     let hidden_threads = view.hidden_threads.clone();
     let mut threads: Vec<(u32, String, u64)> = per_thread
         .into_iter()
-        .map(|(id, ns)| (id, session.thread_name(id).to_owned(), ns))
+        .map(|(id, ns)| (id, timeline::thread_label(session, id), ns))
         .collect();
     threads.sort_by_key(|t| std::cmp::Reverse(t.2));
     let thread_total: u64 = threads.iter().map(|t| t.2).sum::<u64>().max(1);
