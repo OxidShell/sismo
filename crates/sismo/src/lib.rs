@@ -30,6 +30,8 @@ mod sink;
 mod thread;
 mod time;
 
+#[cfg(feature = "alloc")]
+pub mod alloc;
 #[cfg(feature = "log")]
 pub mod log;
 #[cfg(feature = "net")]

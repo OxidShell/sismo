@@ -13,6 +13,9 @@ use crate::sink::{RingBuffer, Sink};
 const SEAL_BYTES: usize = 128 * 1024;
 /// Seal a non-empty chunk after this long.
 const SEAL_INTERVAL: Duration = Duration::from_millis(100);
+/// How often the live heap is sampled when counting allocations.
+#[cfg(feature = "alloc")]
+const HEAP_SAMPLE: Duration = Duration::from_millis(250);
 
 pub(crate) enum Message {
     /// One encoded [`Record::Batch`] from a thread buffer.
@@ -38,6 +41,8 @@ pub(crate) struct Collector {
     pending: Encoder,
     opened: Instant,
     seq: u64,
+    #[cfg(feature = "alloc")]
+    heap_sampled: Instant,
 }
 
 impl Collector {
@@ -49,11 +54,27 @@ impl Collector {
             pending: Encoder::with_capacity(SEAL_BYTES),
             opened: Instant::now(),
             seq: 0,
+            #[cfg(feature = "alloc")]
+            heap_sampled: Instant::now(),
         }
+    }
+
+    #[cfg(feature = "alloc")]
+    fn sample_heap(&mut self) {
+        if !crate::alloc::installed() || self.heap_sampled.elapsed() < HEAP_SAMPLE {
+            return;
+        }
+        self.heap_sampled = Instant::now();
+        let (allocated, freed, count) = crate::alloc::totals();
+        crate::counter!("alloc.live_bytes", allocated.saturating_sub(freed));
+        crate::counter!("alloc.total_bytes", allocated);
+        crate::counter!("alloc.count", count);
     }
 
     pub fn run(mut self) {
         loop {
+            #[cfg(feature = "alloc")]
+            self.sample_heap();
             match self.rx.recv_timeout(SEAL_INTERVAL) {
                 Ok(Message::Batch(bytes)) => {
                     self.append_definitions();

@@ -60,13 +60,13 @@ pub(super) fn render(s: &Summary) -> String {
     let _ = writeln!(out, "## Top functions by self time\n");
     let _ = writeln!(
         out,
-        "| Function | Crate | Group | Calls | Self | Total | p50 | p95 | Max |"
+        "| Function | Crate | Group | Calls | Self | Total | p50 | p95 | Max | Alloc |"
     );
-    let _ = writeln!(out, "|---|---|---|---:|---:|---:|---:|---:|---:|");
+    let _ = writeln!(out, "|---|---|---|---:|---:|---:|---:|---:|---:|---:|");
     for row in &s.top_functions {
         let _ = writeln!(
             out,
-            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             row.name,
             row.krate,
             row.group,
@@ -75,7 +75,8 @@ pub(super) fn render(s: &Summary) -> String {
             Nanos(row.total_ns),
             Nanos(row.p50_ns),
             Nanos(row.p95_ns),
-            Nanos(row.max_ns)
+            Nanos(row.max_ns),
+            crate::units::Bytes(row.alloc_self_bytes)
         );
     }
     if !s.slow_frames.is_empty() {

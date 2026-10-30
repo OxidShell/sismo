@@ -24,12 +24,28 @@ const COLUMNS: [(&str, Option<SortBy>, f32); 7] = [
     ("Histórico p95", None, 176.),
 ];
 
-fn cells(row: &FunctionStats) -> [String; 6] {
+type Column = (&'static str, Option<SortBy>, f32);
+
+/// Columns for this recording: with allocation data the p50 slot shows
+/// self-allocated bytes instead (p50 stays in the detail panel).
+fn columns(allocations: bool) -> [Column; 7] {
+    let mut cols = COLUMNS;
+    if allocations {
+        cols[3] = ("Alloc", Some(SortBy::Alloc), 86.);
+    }
+    cols
+}
+
+fn cells(row: &FunctionStats, allocations: bool) -> [String; 6] {
     [
         row.calls.to_string(),
         Nanos(row.total_ns).to_string(),
         Nanos(row.self_ns).to_string(),
-        Nanos(row.p50_ns).to_string(),
+        if allocations {
+            sismo_analysis::units::Bytes(row.alloc_self_bytes).to_string()
+        } else {
+            Nanos(row.p50_ns).to_string()
+        },
         Nanos(row.p95_ns).to_string(),
         Nanos(row.max_ns).to_string(),
     ]
@@ -64,7 +80,7 @@ fn sparkline(history: &[u64], rgb: theme::Rgb) -> RenderCallback {
     })
 }
 
-fn header(mut ws: State<Workspace>, sort: SortBy) -> Rect {
+fn header(mut ws: State<Workspace>, sort: SortBy, allocations: bool) -> Rect {
     rect()
         .width(Size::fill())
         .height(Size::px(32.))
@@ -95,11 +111,11 @@ fn header(mut ws: State<Workspace>, sort: SortBy) -> Rect {
                     .font_weight(600),
                 ),
         )
-        .children(COLUMNS.iter().map(|(title, key, width)| {
+        .children(columns(allocations).into_iter().map(|(title, key, width)| {
             let on = key.is_some_and(|k| k == sort);
-            let key = *key;
+
             rect()
-                .width(Size::px(*width))
+                .width(Size::px(width))
                 .main_align(if title.starts_with("Hist") {
                     Alignment::Start
                 } else {
@@ -204,6 +220,31 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, row: &FunctionStats) -> 
             11.,
             theme::TEXT3,
         ))
+        .child(mono(
+            format!(
+                "{} llamadas · p50 {} · p95 {} · máx {}",
+                row.calls,
+                Nanos(row.p50_ns),
+                Nanos(row.p95_ns),
+                Nanos(row.max_ns)
+            ),
+            11.,
+            theme::TEXT2,
+        ))
+        .maybe(view.session.allocations, |r| {
+            let per_call = row.alloc_bytes / row.calls.max(1);
+            r.child(mono(
+                format!(
+                    "alloc {} propio · {} total · {} por llamada · {} allocs",
+                    sismo_analysis::units::Bytes(row.alloc_self_bytes),
+                    sismo_analysis::units::Bytes(row.alloc_bytes),
+                    sismo_analysis::units::Bytes(per_call),
+                    row.alloc_count
+                ),
+                11.,
+                theme::TEXT2,
+            ))
+        })
         .child(caption("Histórico · p95 por tramo"))
         .child(
             rect()
@@ -278,13 +319,16 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
         .filter(|c| c.kind == sismo_format::CallsiteKind::Span)
         .count();
     let selected = view.selected_function;
+    let allocations = view.session.allocations;
     let detail_row = selected.and_then(|id| rows.iter().find(|r| r.callsite == id).cloned());
     let count = rows.len();
 
     let list = VirtualScrollView::new_with_data(
-        (rows, selected),
-        move |item, (rows, selected): &(Vec<FunctionStats>, Option<u32>)| {
+        (rows, selected, allocations),
+        move |item, (rows, selected, allocations): &(Vec<FunctionStats>, Option<u32>, bool)| {
             let selected = *selected;
+            let allocations = *allocations;
+            let cols = columns(allocations);
             let Some(row) = rows.get(item.index) else {
                 return rect().into_element();
             };
@@ -315,18 +359,23 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                         .child(swatch(rgb, 6., 1.))
                         .child(mono(row.name.clone(), 12., theme::TEXT)),
                 )
-                .children(cells(row).into_iter().enumerate().map(|(i, value)| {
-                    rect()
-                        .width(Size::px(COLUMNS[i].2))
-                        .horizontal()
-                        .main_align(Alignment::End)
-                        .child(mono(
-                            value,
-                            12.,
-                            if i == 2 { theme::TEXT } else { theme::TEXT2 },
-                        ))
-                        .into_element()
-                }))
+                .children(
+                    cells(row, allocations)
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, value)| {
+                            rect()
+                                .width(Size::px(cols[i].2))
+                                .horizontal()
+                                .main_align(Alignment::End)
+                                .child(mono(
+                                    value,
+                                    12.,
+                                    if i == 2 { theme::TEXT } else { theme::TEXT2 },
+                                ))
+                                .into_element()
+                        }),
+                )
                 .child(
                     rect()
                         .width(Size::px(176.))
@@ -374,7 +423,7 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                 .width(Size::flex(1.))
                 .height(Size::fill())
                 .content(Content::flex())
-                .child(header(ws, view.sort))
+                .child(header(ws, view.sort, view.session.allocations))
                 .child(hline())
                 .maybe_child(empty)
                 .child(list)

@@ -62,6 +62,11 @@ fn frame() {
   spans become scopes and events become logs.
 - With `stdio` (Unix, Android included), `capture_stdio(true)` turns
   `println!`/`eprintln!` lines into logs and still prints them.
+- With the `alloc` feature, install the counting allocator and every scope
+  reports the bytes and allocations made while it ran (the viewer shows them
+  in Funciones and the span detail; `alloc>64kb` filters them), and the live
+  heap is sampled as `alloc.live_bytes`:
+  `#[global_allocator] static A: sismo::alloc::Counting = sismo::alloc::Counting::system();`
 - `handle.dump_flight_recorder("bug")` writes the in-memory history to a
   file, ready to send from a client device that you cannot reach over LAN.
 
@@ -118,7 +123,7 @@ Same in every tab and in the CLI (`-q`):
 |---|---|
 | `crate:freya_*`, `crate:app,framework` | crate or group (`app`, `framework`, `other`) |
 | `fn:*paint*`, `fn:/^torin::/` | function name, glob or regex |
-| `dur>2ms`, `self>1ms`, `calls>100` | span duration, self time, call count |
+| `dur>2ms`, `self>1ms`, `calls>100`, `alloc>64kb` | span duration, self time, call count, allocated bytes |
 | `level:warn+`, `source:stdout` | log level (`+` = that or worse), log source |
 | `thread:main`, `file:canvas.rs`, `frame:slow` | thread, source file, slow frames |
 | `range:5m`, `range:+10s..+20s` | last N of the session, or offsets |

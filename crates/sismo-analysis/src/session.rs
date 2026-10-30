@@ -24,6 +24,12 @@ pub struct Span {
     pub parent: Option<u32>,
     /// Time not covered by child spans.
     pub self_ns: u64,
+    /// Bytes allocated while the span ran, children included.
+    pub alloc_bytes: u64,
+    /// Allocations made while the span ran, children included.
+    pub alloc_count: u64,
+    /// Bytes allocated by the span itself, children excluded.
+    pub alloc_self_bytes: u64,
 }
 
 impl Span {
@@ -42,6 +48,7 @@ impl Span {
 struct Open {
     index: u32,
     children_ns: u64,
+    children_alloc: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -52,6 +59,7 @@ pub struct Thread {
     pub spans: Vec<Span>,
     pub max_depth: u16,
     stack: Vec<Open>,
+    pending_alloc: Option<(u64, u64)>,
 }
 
 impl Thread {
@@ -66,10 +74,14 @@ impl Thread {
             depth,
             parent: self.stack.last().map(|o| o.index),
             self_ns: 0,
+            alloc_bytes: 0,
+            alloc_count: 0,
+            alloc_self_bytes: 0,
         });
         self.stack.push(Open {
             index,
             children_ns: 0,
+            children_alloc: 0,
         });
     }
 
@@ -85,8 +97,13 @@ impl Thread {
         span.end = t.max(span.start);
         let duration = span.end - span.start;
         span.self_ns = duration.saturating_sub(open.children_ns);
+        let (bytes, count) = self.pending_alloc.take().unwrap_or((0, 0));
+        span.alloc_bytes = bytes;
+        span.alloc_count = count;
+        span.alloc_self_bytes = bytes.saturating_sub(open.children_alloc);
         if let Some(parent) = self.stack.last_mut() {
             parent.children_ns += duration;
+            parent.children_alloc += bytes;
         }
     }
 
@@ -223,6 +240,8 @@ pub struct Session {
     pub start: Option<u64>,
     pub groups: Groups,
     pub events: u64,
+    /// Whether the recording carries allocation counts.
+    pub allocations: bool,
 }
 
 impl Session {
@@ -372,6 +391,10 @@ impl Session {
                 message,
                 location,
             }),
+            Event::Alloc { bytes, count, .. } => {
+                self.threads[slot].pending_alloc = Some((bytes, count));
+                self.allocations = true;
+            }
         }
     }
 

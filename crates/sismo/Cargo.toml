@@ -13,6 +13,7 @@ log = ["dep:log"]
 tracing = ["dep:tracing", "dep:tracing-core", "dep:tracing-subscriber"]
 stdio = ["dep:libc"]
 file = []
+alloc = []
 net = ["dep:zudp", "dep:tokio"]
 
 [dependencies]

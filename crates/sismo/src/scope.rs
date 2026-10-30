@@ -13,6 +13,8 @@ static NEXT_ASYNC_ID: AtomicU64 = AtomicU64::new(1);
 #[must_use = "the span ends when the guard is dropped"]
 pub struct ScopeGuard {
     active: bool,
+    #[cfg(feature = "alloc")]
+    allocs: (u64, u64),
 }
 
 impl ScopeGuard {
@@ -20,20 +22,40 @@ impl ScopeGuard {
     #[inline]
     pub fn enter(callsite: &'static Callsite) -> Self {
         if !ACTIVE.load(Ordering::Relaxed) || !callsite.enabled() {
-            return Self { active: false };
+            return Self {
+                active: false,
+                #[cfg(feature = "alloc")]
+                allocs: (0, 0),
+            };
         }
         let id = callsite.id();
         record(|w, t| w.begin(t, id));
-        Self { active: true }
+        Self {
+            active: true,
+            #[cfg(feature = "alloc")]
+            allocs: crate::alloc::thread_totals(),
+        }
     }
 }
 
 impl Drop for ScopeGuard {
     #[inline]
     fn drop(&mut self) {
-        if self.active {
-            record(sismo_format::BatchWriter::end);
+        if !self.active {
+            return;
         }
+        #[cfg(feature = "alloc")]
+        if crate::alloc::installed() {
+            let (bytes, count) = crate::alloc::thread_totals();
+            let (bytes, count) = (
+                bytes.saturating_sub(self.allocs.0),
+                count.saturating_sub(self.allocs.1),
+            );
+            if count > 0 {
+                record(|w, t| w.alloc(t, bytes, count));
+            }
+        }
+        record(sismo_format::BatchWriter::end);
     }
 }
 

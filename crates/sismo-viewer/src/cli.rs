@@ -246,12 +246,12 @@ fn functions(args: &FileArgs, sort: &str, limit: usize) -> Result<(), CliError> 
         return print_json(&rows);
     }
     println!(
-        "{:<56} {:<10} {:>8} {:>11} {:>11} {:>10} {:>10} {:>10}",
-        "function", "group", "calls", "self", "total", "p50", "p95", "max"
+        "{:<56} {:<10} {:>8} {:>11} {:>11} {:>10} {:>10} {:>10} {:>10}",
+        "function", "group", "calls", "self", "total", "p50", "p95", "max", "alloc"
     );
     for row in rows {
         println!(
-            "{:<56} {:<10} {:>8} {:>11} {:>11} {:>10} {:>10} {:>10}",
+            "{:<56} {:<10} {:>8} {:>11} {:>11} {:>10} {:>10} {:>10} {:>10}",
             truncate(&row.name, 56),
             row.group.as_str(),
             row.calls,
@@ -260,6 +260,11 @@ fn functions(args: &FileArgs, sort: &str, limit: usize) -> Result<(), CliError> 
             Nanos(row.p50_ns).to_string(),
             Nanos(row.p95_ns).to_string(),
             Nanos(row.max_ns).to_string(),
+            if session.allocations {
+                Bytes(row.alloc_self_bytes).to_string()
+            } else {
+                "—".to_owned()
+            },
         );
     }
     Ok(())

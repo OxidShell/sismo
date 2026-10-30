@@ -5,6 +5,10 @@
 
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "alloc")]
+#[global_allocator]
+static ALLOC: sismo::alloc::Counting = sismo::alloc::Counting::system();
+
 #[sismo::function]
 fn layout(nodes: u32) -> u32 {
     (0..nodes).fold(0u32, |acc, n| acc.wrapping_add(n * 31))
@@ -13,6 +17,8 @@ fn layout(nodes: u32) -> u32 {
 #[sismo::function]
 fn paint(frame: u64) {
     sismo::scope!("demo::paint::tiles");
+    let tiles: Vec<Vec<u8>> = (0..16).map(|i| vec![0u8; 1024 * (i + 1)]).collect();
+    std::hint::black_box(&tiles);
     let busy = if frame.is_multiple_of(90) { 9 } else { 2 };
     spin(Duration::from_millis(busy));
 }

@@ -39,6 +39,11 @@ pub const KEYS: &[(&str, &str, &str)] = &[
     ("dur>", "span duration (also dur<, dur>=, dur<=)", "dur>2ms"),
     ("self>", "self time of a span or function", "self>1ms"),
     ("calls>", "call count in the functions table", "calls>100"),
+    (
+        "alloc>",
+        "bytes allocated (needs the counting allocator)",
+        "alloc>64kb",
+    ),
     ("level:", "log level; + includes more severe", "level:warn+"),
     ("thread:", "thread name", "thread:main"),
     ("frame:", "frame number or slow", "frame:slow"),
@@ -177,6 +182,7 @@ pub enum TermKind {
     Duration(Cmp, u64),
     SelfTime(Cmp, u64),
     Calls(Cmp, u64),
+    Alloc(Cmp, u64),
     Frame(FrameSel),
     Text(Matcher),
 }
@@ -203,6 +209,30 @@ pub struct Query {
     pub groups: Vec<Vec<Term>>,
     pub find: Vec<Matcher>,
     pub range: Option<RangeSpec>,
+}
+
+/// Parses `512`, `64kb`, `1.5mb`, `2gb` (binary units).
+///
+/// # Errors
+/// [`QueryError::BadNumber`].
+pub fn parse_bytes(value: &str) -> Result<u64, QueryError> {
+    let lower = value.trim().to_lowercase();
+    let split = lower
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(lower.len());
+    let (number, unit) = lower.split_at(split);
+    let number: f64 = number
+        .parse()
+        .map_err(|_| QueryError::BadNumber(value.to_owned()))?;
+    let scale = match unit {
+        "" | "b" => 1.0,
+        "k" | "kb" | "kib" => 1024.0,
+        "m" | "mb" | "mib" => 1_048_576.0,
+        "g" | "gb" | "gib" => 1_073_741_824.0,
+        _ => return Err(QueryError::BadNumber(value.to_owned())),
+    };
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Ok((number * scale) as u64)
 }
 
 /// Parses `12ms`, `3.5s`, `800us`, `40ns`; a bare number means ms.
@@ -310,6 +340,7 @@ impl Query {
                 let kind = match key {
                     "dur" | "duration" => TermKind::Duration(cmp, parse_duration(value)?),
                     "self" => TermKind::SelfTime(cmp, parse_duration(value)?),
+                    "alloc" => TermKind::Alloc(cmp, parse_bytes(value)?),
                     "calls" => TermKind::Calls(
                         cmp,
                         value
@@ -460,6 +491,7 @@ impl Query {
             ),
             TermKind::Duration(cmp, ns) => Some(cmp.test(span.duration(session.end), *ns)),
             TermKind::SelfTime(cmp, ns) => Some(cmp.test(span.self_ns, *ns)),
+            TermKind::Alloc(cmp, bytes) => Some(cmp.test(span.alloc_bytes, *bytes)),
             TermKind::Frame(sel) => Some(Self::frame_matches(session, sel, span.start)),
             TermKind::Text(m) => Some(m.matches(session.name(callsite))),
             TermKind::Level { .. } | TermKind::Source(_) | TermKind::Calls(..) => None,
@@ -496,7 +528,8 @@ impl Query {
             TermKind::Function(_)
             | TermKind::Duration(..)
             | TermKind::SelfTime(..)
-            | TermKind::Calls(..) => None,
+            | TermKind::Calls(..)
+            | TermKind::Alloc(..) => None,
         })
     }
 
@@ -518,9 +551,10 @@ impl Query {
 
     /// Terms that apply to aggregated function rows (`calls`, `self`).
     #[must_use]
-    pub fn matches_stats(&self, calls: u64, self_ns: u64, total_ns: u64) -> bool {
+    pub fn matches_stats(&self, calls: u64, self_ns: u64, total_ns: u64, alloc_bytes: u64) -> bool {
         self.eval(|kind| match kind {
             TermKind::Calls(cmp, n) => Some(cmp.test(calls, *n)),
+            TermKind::Alloc(cmp, bytes) => Some(cmp.test(alloc_bytes, *bytes)),
             TermKind::SelfTime(cmp, ns) => Some(cmp.test(self_ns, *ns)),
             TermKind::Duration(cmp, ns) => Some(cmp.test(total_ns, *ns)),
             _ => None,

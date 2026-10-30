@@ -236,6 +236,13 @@ pub enum Event {
         message: String,
         location: String,
     },
+    /// Heap allocations made while the innermost open span ran (children
+    /// included); emitted right before that span's [`Event::End`].
+    Alloc {
+        t: u64,
+        bytes: u64,
+        count: u64,
+    },
 }
 
 impl Event {
@@ -252,7 +259,8 @@ impl Event {
             | Event::Log { t, .. }
             | Event::Marker { t, .. }
             | Event::Dropped { t, .. }
-            | Event::Panic { t, .. } => *t,
+            | Event::Panic { t, .. }
+            | Event::Alloc { t, .. } => *t,
         }
     }
 }
@@ -274,6 +282,7 @@ mod tag {
     pub const MARKER: u8 = 9;
     pub const DROPPED: u8 = 10;
     pub const PANIC: u8 = 11;
+    pub const ALLOC: u8 = 12;
 }
 
 /// Top-level unit inside a chunk payload.
@@ -430,6 +439,11 @@ fn decode_events(base: u64, body: &[u8]) -> Result<Vec<Event>, DecodeError> {
                 message: dec.string()?,
                 location: dec.string()?,
             },
+            tag::ALLOC => Event::Alloc {
+                t,
+                bytes: dec.uvar()?,
+                count: dec.uvar()?,
+            },
             other => {
                 return Err(DecodeError::InvalidTag {
                     what: "event",
@@ -528,6 +542,10 @@ impl BatchWriter {
         self.stamp(tag::PANIC, t).str(message).str(location);
     }
 
+    pub fn alloc(&mut self, t: u64, bytes: u64, count: u64) {
+        self.stamp(tag::ALLOC, t).uvar(bytes).uvar(count);
+    }
+
     /// Appends an already decoded event.
     pub fn push(&mut self, event: &Event) {
         match event {
@@ -560,6 +578,7 @@ impl BatchWriter {
                 message,
                 location,
             } => self.panic(*t, message, location),
+            Event::Alloc { t, bytes, count } => self.alloc(*t, *bytes, *count),
         }
     }
 
@@ -672,6 +691,11 @@ mod tests {
                         note: "here".into(),
                     },
                     Event::Dropped { t: 902, count: 3 },
+                    Event::Alloc {
+                        t: 902,
+                        bytes: 4096,
+                        count: 2,
+                    },
                     Event::Panic {
                         t: 903,
                         message: "boom".into(),

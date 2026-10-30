@@ -550,7 +550,17 @@ fn detail(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
                             ))
                             .child(kv("Tiempo propio", Nanos(span.self_ns).to_string()))
                             .child(kv("Hijos", children.to_string()))
-                            .child(kv("Inicio", Clock(span.start).to_string())),
+                            .child(kv("Inicio", Clock(span.start).to_string()))
+                            .maybe(session.allocations, |r| {
+                                r.child(kv(
+                                    "Allocs",
+                                    format!(
+                                        "{} · {}",
+                                        sismo_analysis::units::Bytes(span.alloc_bytes),
+                                        span.alloc_count
+                                    ),
+                                ))
+                            }),
                     )
                     .child(
                         rect()

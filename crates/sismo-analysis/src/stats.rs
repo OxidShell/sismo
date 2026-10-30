@@ -27,6 +27,11 @@ pub struct FunctionStats {
     pub max_ns: u64,
     /// p95 per equal slice of the window, oldest first (0 = no calls).
     pub history_p95_ns: Vec<u64>,
+    /// Bytes allocated inside the calls, children included.
+    pub alloc_bytes: u64,
+    /// Bytes allocated by the function itself.
+    pub alloc_self_bytes: u64,
+    pub alloc_count: u64,
 }
 
 /// Value at quantile `q` of an already sorted slice.
@@ -54,6 +59,7 @@ pub enum SortBy {
     P95,
     Max,
     Name,
+    Alloc,
 }
 
 impl SortBy {
@@ -66,6 +72,7 @@ impl SortBy {
             "p95" => Some(SortBy::P95),
             "max" => Some(SortBy::Max),
             "name" => Some(SortBy::Name),
+            "alloc" => Some(SortBy::Alloc),
             _ => None,
         }
     }
@@ -168,6 +175,7 @@ impl Session {
             durations: Vec<u64>,
             self_ns: u64,
             per_bucket: Vec<Vec<u64>>,
+            alloc: (u64, u64, u64),
         }
         let buckets = buckets.max(1);
         let width = (to.saturating_sub(from) / buckets as u64).max(1);
@@ -181,7 +189,11 @@ impl Session {
                     durations: Vec::new(),
                     self_ns: 0,
                     per_bucket: vec![Vec::new(); buckets],
+                    alloc: (0, 0, 0),
                 });
+                entry.alloc.0 += span.alloc_bytes;
+                entry.alloc.1 += span.alloc_self_bytes;
+                entry.alloc.2 += span.alloc_count;
                 let duration = span.end - span.start;
                 entry.durations.push(duration);
                 entry.self_ns += span.self_ns;
@@ -222,9 +234,14 @@ impl Session {
                             percentile(&b, 0.95)
                         })
                         .collect(),
+                    alloc_bytes: a.alloc.0,
+                    alloc_self_bytes: a.alloc.1,
+                    alloc_count: a.alloc.2,
                 }
             })
-            .filter(|row| query.matches_stats(row.calls, row.self_ns, row.total_ns))
+            .filter(|row| {
+                query.matches_stats(row.calls, row.self_ns, row.total_ns, row.alloc_bytes)
+            })
             .collect();
         rows.sort_by(|a, b| match sort {
             SortBy::SelfTime => b.self_ns.cmp(&a.self_ns),
@@ -233,6 +250,7 @@ impl Session {
             SortBy::P95 => b.p95_ns.cmp(&a.p95_ns),
             SortBy::Max => b.max_ns.cmp(&a.max_ns),
             SortBy::Name => a.name.cmp(&b.name),
+            SortBy::Alloc => b.alloc_self_bytes.cmp(&a.alloc_self_bytes),
         });
         rows
     }
