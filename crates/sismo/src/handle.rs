@@ -265,6 +265,7 @@ impl Handle {
         self.shared.ring.as_ref()
     }
 
+    #[cfg(feature = "net")]
     pub(crate) fn add_sink(&self, sink: Box<dyn crate::sink::Sink>) {
         let _ = self.shared.sender.send(Message::AddSink(sink));
     }

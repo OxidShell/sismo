@@ -40,6 +40,7 @@ impl RingBuffer {
     }
 
     /// Chunks currently held, oldest first.
+    #[cfg(feature = "net")]
     pub fn history(&self) -> Vec<(u64, Arc<Chunk>)> {
         self.chunks.iter().cloned().collect()
     }

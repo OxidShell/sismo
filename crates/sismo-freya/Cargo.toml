@@ -1,6 +1,6 @@
 [package]
 name = "sismo-freya"
-description = "Freya plugin that feeds frame marks and render phases into sismo"
+description = "Freya plugin that feeds frame marks, render phases and tree metrics into sismo"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,8 @@ authors.workspace = true
 
 [dependencies]
 sismo.workspace = true
+freya-winit.workspace = true
+freya-core.workspace = true
 
 [lints]
 workspace = true
