@@ -10,7 +10,7 @@ use sismo_analysis::{
     ExportOptions, Format, Group, LoadError, Query, QueryError, Session, SortBy, SummaryOptions,
     parse_duration,
 };
-use sismo_format::{Chunk, FileWriter};
+use sismo_format::{Chunk, FileWriter, SessionInfo};
 
 use crate::client::{ClientEvent, Command as Cmd, Connection, ScanEvent, Scanner};
 
@@ -502,42 +502,57 @@ impl<'a> LiveLink<'a> {
     /// Waits for the welcome, pairs when asked and subscribes. Returns
     /// whether the app is a different run than the one before.
     fn handshake(&mut self) -> Result<bool, CliError> {
-        let mut restarted = false;
         loop {
             match self.conn.events.recv_timeout(Duration::from_secs(10)) {
                 Ok(ClientEvent::Welcome {
                     session,
                     pairing_required,
                     ..
-                }) => {
-                    if self.session_id == 0 {
-                        eprintln!(
-                            "connected to {} {} on {} ({})",
-                            session.app, session.app_version, session.device, session.platform
-                        );
-                    } else if session.session_id != self.session_id {
-                        eprintln!("the app restarted");
-                        restarted = true;
-                        self.last_seq = 0;
-                    } else {
-                        eprintln!("reconnected");
-                    }
-                    self.session_id = session.session_id;
-                    if !pairing_required {
-                        break;
-                    }
-                    let code = match &self.live.code {
-                        Some(code) => code.clone(),
-                        None => ask_code()?,
-                    };
-                    self.conn.send(Cmd::Pair(code));
-                }
-                Ok(ClientEvent::Paired) => break,
-                Ok(ClientEvent::PairRejected(reason) | ClientEvent::Lost(reason)) => {
-                    return Err(CliError::Live(reason));
-                }
+                }) => return self.welcomed(&session, pairing_required),
+                Ok(ClientEvent::Lost(reason)) => return Err(CliError::Live(reason)),
                 Ok(_) => {}
                 Err(_) => return Err(CliError::Live("the app did not answer".into())),
+            }
+        }
+    }
+
+    /// Handles a welcome, whether it opens the connection or comes later
+    /// because the app restarted under it: pairs when asked, then subscribes
+    /// from what was already received (from scratch for a new run).
+    fn welcomed(
+        &mut self,
+        session: &SessionInfo,
+        pairing_required: bool,
+    ) -> Result<bool, CliError> {
+        let mut restarted = false;
+        if self.session_id == 0 {
+            eprintln!(
+                "connected to {} {} on {} ({})",
+                session.app, session.app_version, session.device, session.platform
+            );
+        } else if session.session_id != self.session_id {
+            eprintln!("the app restarted");
+            restarted = true;
+            self.last_seq = 0;
+        } else {
+            eprintln!("reconnected");
+        }
+        self.session_id = session.session_id;
+        if pairing_required {
+            let code = match &self.live.code {
+                Some(code) => code.clone(),
+                None => ask_code()?,
+            };
+            self.conn.send(Cmd::Pair(code));
+            loop {
+                match self.conn.events.recv_timeout(Duration::from_secs(10)) {
+                    Ok(ClientEvent::Paired) => break,
+                    Ok(ClientEvent::PairRejected(reason) | ClientEvent::Lost(reason)) => {
+                        return Err(CliError::Live(reason));
+                    }
+                    Ok(_) => {}
+                    Err(_) => return Err(CliError::Live("the app did not answer".into())),
+                }
             }
         }
         self.conn.send(Cmd::Subscribe {
@@ -560,6 +575,15 @@ impl<'a> LiveLink<'a> {
                     return Ok(Some(Received::Chunk(bytes)));
                 }
                 Ok(ClientEvent::HistoryEnd) => return Ok(Some(Received::HistoryEnd)),
+                Ok(ClientEvent::Welcome {
+                    session,
+                    pairing_required,
+                    ..
+                }) => {
+                    if self.welcomed(&session, pairing_required)? {
+                        return Ok(Some(Received::Restarted));
+                    }
+                }
                 Ok(ClientEvent::Lost(reason)) => {
                     if self.live.no_reconnect {
                         return Err(CliError::Live(reason));

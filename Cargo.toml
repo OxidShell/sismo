@@ -24,7 +24,7 @@ libc = "0.2"
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
-zudp = { version = "0.3.8", default-features = false, features = ["security", "discovery"] }
+zudp = { version = "0.3.9", default-features = false, features = ["security", "discovery"] }
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
 sismo-analysis = { path = "crates/sismo-analysis" }
 regex-lite = "0.1"
@@ -57,8 +57,6 @@ istmo-core = { path = "../istmo/istmo/crates/core" }
 istmo-macros = { path = "../istmo/istmo/crates/macros" }
 istmo-build = { path = "../istmo/istmo/crates/build" }
 istmo-plugins = { path = "../istmo/istmo/crates/plugins" }
-# Reconnection fixes not yet released on crates.io.
-zudp = { path = "../GamerOS/zudp" }
 
 # The viewer draws thousands of spans per frame; fully unoptimized it
 # stutters, so debug builds keep some optimization and all of it for deps.
