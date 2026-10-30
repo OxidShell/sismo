@@ -118,7 +118,11 @@ timeline-open-in-flamegraph = Open in Flamegraph
 timeline-session-calls = In the session · { $count } calls · p50 { $p50 } · p95 { $p95 } · max { $max }
 timeline-frames = Frames
 timeline-frames-summary = { $count } frames   p50 { $p50 }   p95 { $p95 }   > 16.6 ms: { $slow }
-timeline-hint = drag = range · W/S zoom · A/D pan · N next slow
+timeline-hint-live = drag on frames = pick a range · right click = back to live · wheel = zoom · drag lanes = pan
+timeline-hint-file = drag on frames = pick a range · right click = show all · wheel = zoom · drag lanes = pan
+timeline-next-slow = Next slow  N
+timeline-follow-live = Live  End
+timeline-show-all = Show all
 
 ## Flamegraph
 flame-empty = Nothing to show in this range with this query
@@ -180,6 +184,8 @@ functions-compare-footer = { $count } functions · red = worse in B · blue = be
 ## Dialogs
 toast-saved = Saved
 toast-save-failed = Could not save
+toast-cleared = Cleared, showing what arrives from now on
+toast-clear-failed = Could not clear
 toast-record-failed = Could not record
 toast-exported = Exported
 toast-export-failed = Could not export
@@ -232,6 +238,12 @@ dialog-filter-body = Applied on the device: lowering the level lowers the cost, 
 dialog-filter-placeholder = info,my_app=trace,zudp=warn
 dialog-filter-levels = Levels per target
 dialog-filter-apply = Apply in the app
+dialog-clear-title = Clear this session?
+dialog-clear-body = Everything received from { $app } so far ({ $size }, { $duration }) leaves this viewer. The app stays connected and new data shows up from now on.
+dialog-clear-save-hint = "Save and clear" keeps a copy in { $folder }.
+dialog-clear-discard = Clear
+dialog-clear-save = Save and clear
+shell-clear = Clear
 dialog-marker-title = Marker
 dialog-marker-placeholder = what are you doing
 dialog-marker-body = Stays in the app and in the recording; shows up in Timeline, Logs and the CLI summary.

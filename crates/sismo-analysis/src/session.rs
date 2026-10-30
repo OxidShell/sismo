@@ -502,6 +502,21 @@ impl Session {
         self.info.started_unix_ns.saturating_add(t)
     }
 
+    /// The app, thread and callsite records known so far, enough for a
+    /// reader to decode events that follow.
+    #[must_use]
+    pub fn definitions(&self) -> Vec<Record> {
+        std::iter::once(Record::Session(self.info.clone()))
+            .chain(self.threads.iter().map(|t| {
+                Record::Thread(sismo_format::ThreadDef {
+                    id: t.id,
+                    name: t.name.clone(),
+                })
+            }))
+            .chain(self.callsites().cloned().map(Record::Callsite))
+            .collect()
+    }
+
     /// Forgets every recorded event but keeps the app, thread and callsite
     /// definitions, so a live stream keeps decoding from here on. Spans
     /// still open are dropped too; their ends are ignored when they come.

@@ -286,6 +286,38 @@ impl SessionView {
         }
     }
 
+    /// Drops the picked range: a live session follows its latest seconds
+    /// again, a recording shows everything.
+    pub fn reset_view(&mut self) {
+        self.selection = None;
+        self.selected_frame = None;
+        let (start, end) = self.session.span();
+        if self.live().is_some() {
+            self.follow = true;
+            self.paused = false;
+            self.view = (
+                end.saturating_sub(self.live_window_ns).max(start),
+                end.max(start + 1),
+            );
+        } else {
+            self.view = (start, end.max(start + 1));
+        }
+        self.revision += 1;
+    }
+
+    /// Whether the view shows something other than its default range.
+    #[must_use]
+    pub fn view_moved(&self) -> bool {
+        if self.selection.is_some() {
+            return true;
+        }
+        if self.live().is_some() {
+            return !self.follow;
+        }
+        let (start, end) = self.session.span();
+        self.view != (start, end.max(start + 1))
+    }
+
     /// Default name for files saved from this session.
     #[must_use]
     pub fn file_stem(&self) -> String {
@@ -572,6 +604,32 @@ impl SessionView {
         }
         writer.flush()?;
         Ok(writer.bytes_written())
+    }
+
+    /// Forgets what a live app sent so far, keeping the connection. Saving
+    /// afterwards writes the app's definitions first, so the file still
+    /// names every function.
+    ///
+    /// # Errors
+    /// Encoding the definitions chunk failed; nothing was cleared.
+    pub fn clear_received(&mut self) -> Result<(), DecodeError> {
+        let mut enc = sismo_format::Encoder::with_capacity(16 * 1024);
+        for record in self.session.definitions() {
+            record.encode(&mut enc);
+        }
+        let definitions = Chunk::seal(enc.as_slice(), sismo_format::Codec::Lz4)?;
+        let Origin::Live(live) = &mut self.origin else {
+            return Ok(());
+        };
+        live.received = vec![definitions.into_bytes()];
+        live.received_bytes = 0;
+        self.session.clear_events();
+        self.selected_span = None;
+        self.selected_function = None;
+        self.selected_log = None;
+        self.flame_focus.clear();
+        self.reset_view();
+        Ok(())
     }
 
     /// Reconnects after a lost connection.

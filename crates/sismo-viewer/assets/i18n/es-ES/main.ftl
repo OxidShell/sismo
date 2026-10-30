@@ -118,7 +118,11 @@ timeline-open-in-flamegraph = Abrir en Flamegraph
 timeline-session-calls = En la sesión · { $count } llamadas · p50 { $p50 } · p95 { $p95 } · max { $max }
 timeline-frames = Frames
 timeline-frames-summary = { $count } frames   p50 { $p50 }   p95 { $p95 }   > 16.6 ms: { $slow }
-timeline-hint = arrastrar = rango · W/S zoom · A/D mover · N siguiente lento
+timeline-hint-live = arrastrar en frames = elegir rango · clic derecho = volver a vivo · rueda = zoom · arrastrar carriles = mover
+timeline-hint-file = arrastrar en frames = elegir rango · clic derecho = ver todo · rueda = zoom · arrastrar carriles = mover
+timeline-next-slow = Siguiente lento  N
+timeline-follow-live = En vivo  Fin
+timeline-show-all = Ver todo
 
 ## Flamegraph
 flame-empty = Nada que mostrar en este rango con esta consulta
@@ -180,6 +184,8 @@ functions-compare-footer = { $count } funciones · rojo = peor en B · azul = me
 ## Diálogos
 toast-saved = Guardado
 toast-save-failed = No se pudo guardar
+toast-cleared = Limpio, se muestra lo que llegue desde ahora
+toast-clear-failed = No se pudo limpiar
 toast-record-failed = No se pudo grabar
 toast-exported = Exportado
 toast-export-failed = No se pudo exportar
@@ -232,6 +238,12 @@ dialog-filter-body = Se aplica en el dispositivo: bajar el nivel baja el costo, 
 dialog-filter-placeholder = info,mi_app=trace,zudp=warn
 dialog-filter-levels = Niveles por target
 dialog-filter-apply = Aplicar en la app
+dialog-clear-title = ¿Limpiar esta sesión?
+dialog-clear-body = Todo lo recibido de { $app } hasta ahora ({ $size }, { $duration }) sale de este visor. La app sigue conectada y lo nuevo aparece desde ahora.
+dialog-clear-save-hint = «Guardar y limpiar» deja una copia en { $folder }.
+dialog-clear-discard = Limpiar
+dialog-clear-save = Guardar y limpiar
+shell-clear = Limpiar
 dialog-marker-title = Marcador
 dialog-marker-placeholder = qué estás haciendo
 dialog-marker-body = Queda en la app y en la grabación; aparece en Timeline, Logs y en el resumen del CLI.

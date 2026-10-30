@@ -13,7 +13,7 @@ use super::Workspace;
 use super::draw::Scene;
 use super::i18n::tr;
 use super::theme::{self, Rgb};
-use super::widgets::{Kind, button, caption, hline, mono, swatch, text};
+use super::widgets::{Kind, button, caption, hline, mono, swatch, text, tool};
 use crate::workspace::{SessionView, Tab};
 
 const STRIP_H: f32 = 150.;
@@ -699,6 +699,57 @@ fn detail(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
     )
 }
 
+/// Mouse twin of the timeline keys, and the hint for dragging.
+fn toolbar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
+    let act = move |f: fn(&mut SessionView)| {
+        move |_| {
+            if let Some(v) = ws.write().active_mut() {
+                f(v);
+            }
+        }
+    };
+    let live = view.live().is_some();
+    let moved = view.view_moved();
+    rect()
+        .width(Size::fill())
+        .horizontal()
+        .content(Content::flex())
+        .cross_align(Alignment::Center)
+        .spacing(6.)
+        .padding((8., 16., 0., 16.))
+        .child(
+            text(
+                if live {
+                    tr!("timeline-hint-live")
+                } else {
+                    tr!("timeline-hint-file")
+                },
+                11.,
+                theme::TEXT3,
+            )
+            .width(Size::flex(1.)),
+        )
+        .child(tool("−", false, act(|v| keyboard_nav(v, "s"))))
+        .child(tool("+", false, act(|v| keyboard_nav(v, "w"))))
+        .child(tool("‹", false, act(|v| keyboard_nav(v, "a"))))
+        .child(tool("›", false, act(|v| keyboard_nav(v, "d"))))
+        .child(tool(tr!("timeline-next-slow"), false, act(next_slow_frame)))
+        .child(tool(
+            if live {
+                tr!("timeline-follow-live")
+            } else {
+                tr!("timeline-show-all")
+            },
+            !moved,
+            act(SessionView::reset_view),
+        ))
+}
+
+/// Whether a pointer event comes from the main button (or a touch).
+fn primary(e: &Event<PointerEventData>) -> bool {
+    !matches!(e.button(), Some(MouseButton::Right | MouseButton::Middle))
+}
+
 pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
     let query = view.effective_query();
     let splits = frame_splits(view);
@@ -744,8 +795,8 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                 .child(swatch(theme::group(*g), 8., 1.))
                 .child(text(theme::group_label(*g), 11., theme::TEXT2))
                 .into_element()
-        }))
-        .child(text(tr!("timeline-hint"), 11., theme::TEXT3));
+        }));
+    let toolbar = toolbar(ws, view);
 
     let strip = rect()
         .width(Size::fill())
@@ -757,7 +808,17 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             }
         })
         .background(strip_paint)
+        .on_mouse_down(move |e: Event<MouseEventData>| {
+            if e.button == Some(MouseButton::Right)
+                && let Some(v) = ws.write().active_mut()
+            {
+                v.reset_view();
+            }
+        })
         .on_pointer_down(move |e: Event<PointerEventData>| {
+            if !primary(&e) {
+                return;
+            }
             let x = e.element_location().x;
             let w = ws.peek();
             let Some(scale) = w.active().and_then(|v| strip_scale(v, strip_w)) else {
@@ -803,7 +864,10 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                 });
             });
         })
-        .on_pointer_press(move |_| {
+        .on_pointer_press(move |e: Event<PointerEventData>| {
+            if !primary(&e) {
+                return;
+            }
             let Some(drag) = DRAG.with(|d| d.borrow_mut().take()) else {
                 return;
             };
@@ -844,6 +908,8 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             let Some(v) = w.active_mut() else { return };
             let (lane_list, _) = lanes(v);
             let Some((thread, index)) = hit_span(v, &lane_list, lanes_w, x, y) else {
+                // Empty space: back to the default range, like on the strip.
+                v.reset_view();
                 return;
             };
             let Some(callsite) = v
@@ -880,6 +946,9 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             zoom(v, t, if e.delta_y > 0. { 0.8 } else { 1.25 });
         })
         .on_pointer_down(move |e: Event<PointerEventData>| {
+            if !primary(&e) {
+                return;
+            }
             let x = e.element_location().x;
             let view = ws.peek().active().map(|v| v.view);
             let Some(view) = view else { return };
@@ -924,6 +993,9 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             });
         })
         .on_pointer_press(move |e: Event<PointerEventData>| {
+            if !primary(&e) {
+                return;
+            }
             let moved = DRAG
                 .with(|d| d.borrow_mut().take())
                 .is_some_and(|d| d.moved);
@@ -958,6 +1030,7 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
         .expanded()
         .content(Content::flex())
         .child(frames_header)
+        .child(toolbar)
         .child(strip)
         .child(hline())
         .child(ruler)

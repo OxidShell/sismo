@@ -574,6 +574,77 @@ impl Component for MarkerDialog {
     }
 }
 
+/// Asks before forgetting what a live app sent, offering to save it first.
+#[derive(PartialEq)]
+struct ClearDialog(State<Workspace>);
+
+/// Clears the active live session, saving it first into the recordings
+/// folder when `save` is set. Nothing is cleared when the save fails.
+fn clear_session(mut ws: State<Workspace>, save: bool) {
+    let mut w = ws.write();
+    w.dialog = None;
+    let dir = w.prefs.recordings_dir();
+    let Some(view) = w.active_mut() else { return };
+    let saved = if save {
+        let path = dir.join(format!("{}.sismo", view.file_stem()));
+        let result = std::fs::create_dir_all(&dir).and_then(|()| view.save_received(&path));
+        match result {
+            Ok(bytes) => Some((path, bytes)),
+            Err(error) => {
+                w.notify("toast-save-failed", error.to_string(), None, true);
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let cleared = view.clear_received();
+    match (cleared, saved) {
+        (Err(error), _) => w.notify("toast-clear-failed", error.to_string(), None, true),
+        (Ok(()), Some((path, bytes))) => {
+            w.notify("toast-saved", Bytes(bytes).to_string(), Some(path), false);
+        }
+        (Ok(()), None) => w.notify("toast-cleared", String::new(), None, false),
+    }
+}
+
+impl Component for ClearDialog {
+    fn render(&self) -> impl IntoElement {
+        let ws = self.0;
+        let body = ws.read().active().map_or_else(String::new, |v| {
+            let (start, end) = v.session.span();
+            tr!(
+                "dialog-clear-body",
+                app = v.session.info.app.as_str(),
+                size = Bytes(v.live().map_or(0, |l| l.received_bytes)).to_string(),
+                duration = sismo_analysis::units::Nanos(end.saturating_sub(start)).to_string(),
+            )
+        });
+        let folder = ws.read().prefs.recordings_dir().display().to_string();
+        panel(460.)
+            .padding(20.)
+            .spacing(12.)
+            .child(title_row(&tr!("dialog-clear-title")))
+            .child(text(body, 12., theme::TEXT2))
+            .child(text(
+                tr!("dialog-clear-save-hint", folder = folder),
+                11.,
+                theme::TEXT3,
+            ))
+            .child(footer(vec![
+                button(tr!("common-cancel"), Kind::Secondary, move |_| close(ws)).into_element(),
+                button(tr!("dialog-clear-discard"), Kind::Danger, move |_| {
+                    clear_session(ws, false);
+                })
+                .into_element(),
+                button(tr!("dialog-clear-save"), Kind::Primary, move |_| {
+                    clear_session(ws, true);
+                })
+                .into_element(),
+            ]))
+    }
+}
+
 /// Command palette entries: label, shortcut, action id.
 const ACTIONS: [(&str, &str, u8); 14] = [
     ("palette-compare", "Ctrl D", 11),
@@ -809,6 +880,7 @@ pub fn render(ws: State<Workspace>, dialog: &Dialog) -> Rect {
         Dialog::Shortcuts => shortcuts().into_element(),
         Dialog::Marker { .. } => MarkerDialog(ws).into_element(),
         Dialog::Groups => super::groups::GroupsDialog(ws).into_element(),
+        Dialog::ClearSession => ClearDialog(ws).into_element(),
     };
     scrim(move |_| close(ws), content)
 }

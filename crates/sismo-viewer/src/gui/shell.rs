@@ -112,11 +112,19 @@ fn top_bar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
         .child(button(tr!("settings-title"), Kind::Secondary, move |_| {
             ws.write().settings = Some(super::settings::Section::default());
         }))
-        .maybe(is_live && recording, |r| {
+        .maybe(is_live, |r| {
             r.child(button(tr!("shell-marker"), Kind::Secondary, move |_| {
                 ws.write().dialog = Some(Dialog::Marker {
                     text: String::new(),
                 });
+            }))
+            .child(button(
+                tr!("shell-save-received"),
+                Kind::Secondary,
+                move |_| dialogs::save_received(ws),
+            ))
+            .child(button(tr!("shell-clear"), Kind::Secondary, move |_| {
+                ws.write().dialog = Some(Dialog::ClearSession);
             }))
         })
         .maybe(is_live, |r| {

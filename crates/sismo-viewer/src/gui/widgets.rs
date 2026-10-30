@@ -66,6 +66,22 @@ pub fn button(
         .child(text(label_text, 12., fg).font_weight(500))
 }
 
+/// Compact toolbar button; `on` marks a mode that is active.
+pub fn tool(
+    label_text: impl Into<String>,
+    on: bool,
+    on_press: impl FnMut(Event<PressEventData>) + 'static,
+) -> Rect {
+    rect()
+        .padding((3., 8.))
+        .corner_radius(4.)
+        .background(theme::color(if on { theme::BG3 } else { theme::BG1 }))
+        .border(border(if on { theme::TEXT3 } else { theme::LINE2 }))
+        .cursor(CursorIcon::Pointer)
+        .on_press(on_press)
+        .child(text(label_text, 11., if on { theme::TEXT } else { theme::TEXT2 }).font_weight(500))
+}
+
 /// Pill with a colored dot, used for levels, sources and states.
 pub fn chip(label_text: impl Into<String>, dot: Rgb, on: bool) -> Rect {
     rect()

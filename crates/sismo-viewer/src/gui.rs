@@ -61,6 +61,7 @@ pub enum Dialog {
     Shortcuts,
     Marker { text: String },
     Groups,
+    ClearSession,
 }
 
 /// Transient notice in the bottom-right corner.
@@ -401,8 +402,7 @@ fn handle_shortcut(mut ws: State<Workspace>, event: &KeyboardEventData) {
         },
         Key::Named(NamedKey::End) if !dialog_open => {
             if let Some(view) = ws.write().active_mut() {
-                view.follow = true;
-                view.paused = false;
+                view.reset_view();
             }
         }
         _ => {}
