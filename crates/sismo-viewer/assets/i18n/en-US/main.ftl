@@ -91,6 +91,7 @@ shell-retry = Retry
 shell-enter-code = Enter code…
 shell-lost-banner = Connection lost ({ $reason }) · everything received up to { $until } is still here
 shell-retry-now = Retry now
+shell-retrying = next try in { $seconds } s
 shell-save-received = Save what was received…
 shell-paused-banner = View frozen · the app keeps sending and the viewer stores it in the background · Space resumes
 

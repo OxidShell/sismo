@@ -546,6 +546,16 @@ fn banner(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
                     )
                     .width(Size::flex(1.)),
                 )
+                .maybe_child(live.retry.wait().map(|wait| {
+                    text(
+                        tr!(
+                            "shell-retrying",
+                            seconds = wait.as_secs().max(1).to_string()
+                        ),
+                        12.,
+                        theme::TEXT2,
+                    )
+                }))
                 .child(button(tr!("shell-retry-now"), Kind::Secondary, move |_| {
                     if let Some(v) = ws.write().active_mut() {
                         let _ = v.reconnect();

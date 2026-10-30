@@ -106,6 +106,82 @@ pub struct Saved {
     pub markers: u32,
 }
 
+/// Backoff for reconnecting a lost live session: 1 s, doubling, up to 30 s.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Retry {
+    attempts: u32,
+    next: Option<Instant>,
+}
+
+impl Retry {
+    const FIRST: Duration = Duration::from_secs(1);
+    const MAX: Duration = Duration::from_secs(30);
+
+    /// Plans the next attempt after one more failure.
+    pub fn schedule(&mut self) {
+        let delay = Self::FIRST
+            .saturating_mul(1 << self.attempts.min(5))
+            .min(Self::MAX);
+        self.attempts += 1;
+        self.next = Some(Instant::now() + delay);
+    }
+
+    /// Whether an attempt is planned and its time has come.
+    #[must_use]
+    pub fn due(&self) -> bool {
+        self.next.is_some_and(|t| Instant::now() >= t)
+    }
+
+    /// Time left before the next attempt, for the lost banner.
+    #[must_use]
+    pub fn wait(&self) -> Option<Duration> {
+        self.next
+            .map(|t| t.saturating_duration_since(Instant::now()))
+    }
+}
+
+/// A recording made on the device, arriving in pieces. Complete only when
+/// every byte arrived: a lost piece must not end up as zeros in the file.
+#[derive(Debug)]
+pub struct DeviceUpload {
+    pub path: PathBuf,
+    pub buffer: Vec<u8>,
+    total: u64,
+    pieces: std::collections::BTreeMap<u64, u64>,
+}
+
+impl DeviceUpload {
+    #[must_use]
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            buffer: Vec::new(),
+            total: 0,
+            pieces: std::collections::BTreeMap::new(),
+        }
+    }
+
+    pub fn add(&mut self, offset: u64, total: u64, bytes: &[u8]) {
+        self.total = total;
+        let Ok(start) = usize::try_from(offset) else {
+            return;
+        };
+        let Some(end) = start.checked_add(bytes.len()) else {
+            return;
+        };
+        if self.buffer.len() < end {
+            self.buffer.resize(end, 0);
+        }
+        self.buffer[start..end].copy_from_slice(bytes);
+        self.pieces.insert(offset, bytes.len() as u64);
+    }
+
+    #[must_use]
+    pub fn complete(&self) -> bool {
+        self.total > 0 && self.pieces.values().sum::<u64>() >= self.total
+    }
+}
+
 pub struct Live {
     pub addr: SocketAddr,
     pub connection: Option<Connection>,
@@ -120,7 +196,11 @@ pub struct Live {
     pub applied: usize,
     pub received_bytes: u64,
     pub recording: Option<Recording>,
-    pub device_upload: Option<(PathBuf, Vec<u8>, u64)>,
+    pub device_upload: Option<DeviceUpload>,
+    /// Highest chunk seq received from the current app session.
+    pub last_seq: u64,
+    /// When to try again after the connection is lost.
+    pub retry: Retry,
     pub last_chunk: Option<Instant>,
     pub events_per_sec: f64,
     rate_window: (Instant, u64),
@@ -250,6 +330,8 @@ impl SessionView {
             received_bytes: 0,
             recording: None,
             device_upload: None,
+            last_seq: 0,
+            retry: Retry::default(),
             last_chunk: None,
             events_per_sec: 0.0,
             rate_window: (Instant::now(), 0),
@@ -431,6 +513,9 @@ impl SessionView {
             return None;
         }
         let mut changed = false;
+        let mut restarted = false;
+        let mut subscribe = false;
+        let mut saved = None;
         for event in events {
             match event {
                 ClientEvent::Welcome {
@@ -439,27 +524,40 @@ impl SessionView {
                     filter,
                     history_bytes,
                 } => {
+                    let known = self.session.info.session_id;
+                    if known != 0 && known != session.session_id {
+                        // The app restarted: its timeline starts over and its
+                        // ids mean other things, so nothing old can be merged.
+                        restarted = true;
+                    }
                     self.session.info = session;
                     live.app_filter = filter;
                     live.history_bytes = history_bytes;
+                    live.retry = Retry::default();
                     if pairing_required {
                         live.status = LiveStatus::NeedsPairing { rejected: None };
                     } else {
                         live.status = LiveStatus::Streaming;
-                        conn.send(Command::Subscribe { history: true });
+                        subscribe = true;
                     }
                 }
                 ClientEvent::Paired => {
                     self.paired_now = true;
                     live.status = LiveStatus::Streaming;
-                    conn.send(Command::Subscribe { history: true });
+                    subscribe = true;
                 }
                 ClientEvent::PairRejected(reason) => {
                     live.status = LiveStatus::NeedsPairing {
                         rejected: Some(reason),
                     };
                 }
-                ClientEvent::Chunk(bytes) => {
+                ClientEvent::Chunk { seq, bytes } => {
+                    // Seq 0 carries definitions, safe to apply again; anything
+                    // else at or below what we have is a replay.
+                    if seq != 0 && seq <= live.last_seq {
+                        continue;
+                    }
+                    live.last_seq = live.last_seq.max(seq);
                     live.received_bytes += bytes.len() as u64;
                     live.last_chunk = Some(Instant::now());
                     if let Some(recording) = &mut live.recording
@@ -484,13 +582,8 @@ impl SessionView {
                     total,
                     bytes,
                 } => {
-                    if let Some((_, buffer, expected)) = &mut live.device_upload {
-                        *expected = total;
-                        let offset = usize::try_from(offset).unwrap_or(usize::MAX);
-                        if buffer.len() < offset + bytes.len() {
-                            buffer.resize(offset + bytes.len(), 0);
-                        }
-                        buffer[offset..offset + bytes.len()].copy_from_slice(&bytes);
+                    if let Some(upload) = &mut live.device_upload {
+                        upload.add(offset, total, &bytes);
                     }
                 }
                 ClientEvent::Rtt(rtt) => live.rtt = Some(rtt),
@@ -499,8 +592,21 @@ impl SessionView {
                         reason,
                         since: Instant::now(),
                     };
+                    live.retry.schedule();
                 }
             }
+        }
+        if restarted {
+            saved = self.start_over();
+        }
+        let Origin::Live(live) = &mut self.origin else {
+            return saved;
+        };
+        if subscribe && let Some(conn) = &live.connection {
+            conn.send(Command::Subscribe {
+                history: true,
+                since: live.last_seq,
+            });
         }
         let elapsed = live.rate_window.0.elapsed();
         // While paused nothing is decoded; keep showing the last rate.
@@ -510,12 +616,13 @@ impl SessionView {
             live.events_per_sec = rate;
             live.rate_window = (Instant::now(), 0);
         }
-        if let Some((path, buffer, total)) = &live.device_upload
-            && *total > 0
-            && buffer.len() as u64 >= *total
+        if live
+            .device_upload
+            .as_ref()
+            .is_some_and(DeviceUpload::complete)
+            && let Some(upload) = live.device_upload.take()
         {
-            let _ = std::fs::write(path, buffer);
-            live.device_upload = None;
+            let _ = std::fs::write(&upload.path, &upload.buffer);
         }
         if changed {
             if self.follow && !self.paused {
@@ -536,7 +643,7 @@ impl SessionView {
             .last()
             .is_some_and(|l| l.level == sismo_format::Level::Error);
         let Origin::Live(live) = &mut self.origin else {
-            return None;
+            return saved;
         };
         if let Some(recording) = &mut live.recording {
             if error_seen && recording.error_seen_at.is_none() {
@@ -546,7 +653,7 @@ impl SessionView {
                 return self.stop_recording();
             }
         }
-        None
+        saved
     }
 
     /// Starts writing the live stream to `path`.
@@ -601,7 +708,7 @@ impl SessionView {
         if let Some(conn) = &live.connection {
             conn.send(Command::StopDeviceRecording);
             let device_path = recording.path.with_extension("device.sismo");
-            live.device_upload = Some((device_path, Vec::new(), 0));
+            live.device_upload = Some(DeviceUpload::new(device_path));
         }
         Some(Saved {
             bytes: recording.bytes(),
@@ -668,15 +775,60 @@ impl SessionView {
     /// # Errors
     /// I/O errors starting the connection thread.
     pub fn reconnect(&mut self) -> io::Result<()> {
+        let addr = self.live().map(|l| l.addr);
+        match addr {
+            Some(addr) => self.reconnect_to(addr),
+            None => Ok(()),
+        }
+    }
+
+    /// Reconnects to `addr`, which may differ from the old address when the
+    /// app came back on another port or network. What was received stays;
+    /// the app only resends what came after it, or everything if it is a
+    /// new run of the app.
+    ///
+    /// # Errors
+    /// I/O errors starting the connection thread.
+    pub fn reconnect_to(&mut self, addr: SocketAddr) -> io::Result<()> {
         let Origin::Live(live) = &mut self.origin else {
             return Ok(());
         };
+        // Drop the old connection first so its thread says goodbye.
+        live.connection = None;
         live.connection = Some(Connection::open(
-            live.addr,
+            addr,
             format!("sismo {}", env!("CARGO_PKG_VERSION")),
         )?);
+        live.addr = addr;
         live.status = LiveStatus::Connecting;
+        live.rtt = None;
+        live.retry.next = None;
         Ok(())
+    }
+
+    /// The app this live tab follows restarted: close the recording (it
+    /// belongs to the old run) and start an empty session for the new run.
+    fn start_over(&mut self) -> Option<Saved> {
+        let saved = self.stop_recording();
+        let info = std::mem::take(&mut self.session.info);
+        self.session = Session::default();
+        self.session.info = info;
+        self.groups_applied = false;
+        self.selection = None;
+        self.selected_frame = None;
+        self.selected_span = None;
+        self.selected_function = None;
+        self.selected_log = None;
+        self.flame_focus.clear();
+        if let Origin::Live(live) = &mut self.origin {
+            live.received.clear();
+            live.applied = 0;
+            live.received_bytes = 0;
+            live.last_seq = 0;
+            live.device_upload = None;
+        }
+        self.reset_view();
+        saved
     }
 }
 

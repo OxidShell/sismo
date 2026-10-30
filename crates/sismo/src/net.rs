@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{self, BufWriter};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -19,10 +19,13 @@ use crate::handle::Handle;
 use crate::registry::registry;
 use crate::sink::{Sink, lock};
 
-/// Viewers that stay silent this long are dropped.
-const VIEWER_TIMEOUT: Duration = Duration::from_secs(15);
-/// Wrong pairing codes tolerated per viewer address.
+/// Viewers that stay silent this long are dropped (they ping every 2 s).
+const VIEWER_TIMEOUT: Duration = Duration::from_secs(8);
+/// Wrong pairing codes per IP before pairing locks for a while.
 const MAX_PAIR_ATTEMPTS: u32 = 5;
+/// First lockout; each further one doubles, up to [`MAX_PAIR_LOCKOUT`].
+const PAIR_LOCKOUT: Duration = Duration::from_secs(30);
+const MAX_PAIR_LOCKOUT: Duration = Duration::from_mins(15);
 /// Piece size for on-device recording uploads.
 const UPLOAD_PIECE: usize = 192 * 1024;
 
@@ -160,8 +163,35 @@ struct Viewer {
     authorized: bool,
     subscribed: bool,
     last_seq: u64,
-    attempts: u32,
+    /// Static key the viewer said hello with; authorization is bound to it.
+    key: Option<[u8; 32]>,
     last_seen: Option<Instant>,
+}
+
+/// Wrong pairing codes seen from one IP and when pairing opens again.
+struct Attempts {
+    failures: u32,
+    locked_until: Option<Instant>,
+}
+
+impl Attempts {
+    /// Lockout after every [`MAX_PAIR_ATTEMPTS`] failures, doubling each
+    /// time: ephemeral viewer ports make a per-address limit worthless.
+    fn fail(&mut self) {
+        self.failures += 1;
+        if self.failures.is_multiple_of(MAX_PAIR_ATTEMPTS) {
+            let rounds = self.failures / MAX_PAIR_ATTEMPTS;
+            let lock = PAIR_LOCKOUT
+                .saturating_mul(1 << rounds.min(5).saturating_sub(1))
+                .min(MAX_PAIR_LOCKOUT);
+            self.locked_until = Some(Instant::now() + lock);
+        }
+    }
+
+    fn locked_for(&self) -> Option<Duration> {
+        self.locked_until
+            .and_then(|until| until.checked_duration_since(Instant::now()))
+    }
 }
 
 struct Server {
@@ -170,9 +200,12 @@ struct Server {
     auth: AuthMode,
     code: String,
     viewers: HashMap<SocketAddr, Viewer>,
+    attempts: HashMap<IpAddr, Attempts>,
     handle: Handle,
     device: Arc<Mutex<DeviceRecording>>,
     device_dir: PathBuf,
+    /// Viewer that started the on-device recording.
+    device_owner: Option<SocketAddr>,
 }
 
 impl Server {
@@ -181,64 +214,40 @@ impl Server {
         let _ = self.sender.send_stream(bytes, to, stream_id).await;
     }
 
-    fn known_key(&self, socket: &ZudpSocket<RawBytes>, from: SocketAddr) -> bool {
-        socket
-            .peer_remote_static_key(from)
-            .is_some_and(|key| self.identity.trusted.contains(&key))
-    }
-
     async fn on_message(
         &mut self,
         socket: &ZudpSocket<RawBytes>,
         from: SocketAddr,
         message: ToRecorder,
     ) {
-        let viewer = self.viewers.entry(from).or_default();
+        let key = socket.peer_remote_static_key(from);
+        if let ToRecorder::Hello { .. } = message {
+            self.hello(from, key).await;
+            return;
+        }
+        let Some(viewer) = self.viewers.get_mut(&from) else {
+            // Nothing but a hello opens a conversation.
+            return;
+        };
         viewer.last_seen = Some(Instant::now());
+        // A different key at a known address is a different viewer that
+        // reused the port: it gets nothing until it says hello. A key that
+        // was not known yet at hello (handshake still settling) is adopted.
+        match (viewer.key, key) {
+            (Some(known), Some(now)) if known != now => {
+                self.viewers.remove(&from);
+                return;
+            }
+            (None, Some(now)) => viewer.key = Some(now),
+            _ => {}
+        }
         match message {
-            ToRecorder::Hello { .. } => {
-                let open = self.auth == AuthMode::Open;
-                let trusted = self.known_key(socket, from);
-                let viewer = self.viewers.entry(from).or_default();
-                viewer.authorized = open || trusted;
-                let pairing_required = !viewer.authorized;
-                let history_bytes = self.handle.flight_recorder_bytes() as u64;
-                let welcome = ToViewer::Welcome {
-                    session: registry().session(),
-                    pairing_required,
-                    filter: registry().filter().to_string(),
-                    history_bytes,
-                };
-                self.send(from, stream::CONTROL, &welcome).await;
-            }
-            ToRecorder::Pair { code } => {
-                let viewer = self.viewers.entry(from).or_default();
-                if viewer.attempts >= MAX_PAIR_ATTEMPTS {
-                    let reply = ToViewer::PairRejected {
-                        reason: "too many attempts; restart the app to pair again".into(),
-                    };
-                    self.send(from, stream::CONTROL, &reply).await;
-                    return;
+            ToRecorder::Hello { .. } => {}
+            ToRecorder::Pair { code } => self.pair(from, key, &code).await,
+            ToRecorder::Subscribe { history, since } => {
+                if self.authorized(from) {
+                    self.subscribe(from, history, since).await;
                 }
-                if code.trim() == self.code {
-                    viewer.authorized = true;
-                    if let Some(key) = socket.peer_remote_static_key(from) {
-                        self.identity.trust(key);
-                    }
-                    self.send(from, stream::CONTROL, &ToViewer::Paired).await;
-                } else {
-                    viewer.attempts += 1;
-                    let reply = ToViewer::PairRejected {
-                        reason: "wrong code".into(),
-                    };
-                    self.send(from, stream::CONTROL, &reply).await;
-                }
-            }
-            ToRecorder::Subscribe { history } => {
-                if !self.authorized(from) {
-                    return;
-                }
-                self.subscribe(from, history).await;
             }
             ToRecorder::SetFilter { filter } => {
                 if !self.authorized(from) {
@@ -259,7 +268,7 @@ impl Server {
             }
             ToRecorder::StartDeviceRecording => {
                 if self.authorized(from) {
-                    self.start_device_recording();
+                    self.start_device_recording(from);
                 }
             }
             ToRecorder::StopDeviceRecording => {
@@ -271,9 +280,74 @@ impl Server {
                 self.send(from, stream::CONTROL, &ToViewer::Pong { nonce })
                     .await;
             }
-            ToRecorder::Bye => {
-                self.viewers.remove(&from);
+            ToRecorder::Bye => self.forget(from),
+        }
+    }
+
+    async fn hello(&mut self, from: SocketAddr, key: Option<[u8; 32]>) {
+        // The same viewer from a new address (restart, new port, roaming):
+        // drop the old entry so it stops receiving and does not linger.
+        if let Some(key) = key {
+            let stale: Vec<SocketAddr> = self
+                .viewers
+                .iter()
+                .filter(|(addr, v)| **addr != from && v.key == Some(key))
+                .map(|(addr, _)| *addr)
+                .collect();
+            for addr in stale {
+                self.forget(addr);
             }
+        }
+        let open = self.auth == AuthMode::Open;
+        let trusted = key.is_some_and(|k| self.identity.trusted.contains(&k));
+        let viewer = Viewer {
+            authorized: open || trusted,
+            key,
+            last_seen: Some(Instant::now()),
+            ..Viewer::default()
+        };
+        let pairing_required = !viewer.authorized;
+        self.viewers.insert(from, viewer);
+        let welcome = ToViewer::Welcome {
+            session: registry().session(),
+            pairing_required,
+            filter: registry().filter().to_string(),
+            history_bytes: self.handle.flight_recorder_bytes() as u64,
+        };
+        self.send(from, stream::CONTROL, &welcome).await;
+    }
+
+    async fn pair(&mut self, from: SocketAddr, key: Option<[u8; 32]>, code: &str) {
+        let reject = |reason: String| ToViewer::PairRejected { reason };
+        // Trust is remembered by key; a viewer without one cannot pair.
+        let Some(key) = key else {
+            let reply = reject("this viewer has no key; update sismo".into());
+            self.send(from, stream::CONTROL, &reply).await;
+            return;
+        };
+        let attempts = self.attempts.entry(from.ip()).or_insert(Attempts {
+            failures: 0,
+            locked_until: None,
+        });
+        if let Some(wait) = attempts.locked_for() {
+            let reply = reject(format!(
+                "too many wrong codes; try again in {} s",
+                wait.as_secs().max(1)
+            ));
+            self.send(from, stream::CONTROL, &reply).await;
+            return;
+        }
+        if code.trim() == self.code {
+            self.attempts.remove(&from.ip());
+            if let Some(viewer) = self.viewers.get_mut(&from) {
+                viewer.authorized = true;
+            }
+            self.identity.trust(key);
+            self.send(from, stream::CONTROL, &ToViewer::Paired).await;
+        } else {
+            attempts.fail();
+            self.send(from, stream::CONTROL, &reject("wrong code".into()))
+                .await;
         }
     }
 
@@ -289,36 +363,32 @@ impl Server {
             .collect()
     }
 
-    async fn subscribe(&mut self, from: SocketAddr, history: bool) {
+    /// Starts streaming to `from`. The definitions go first (seq 0, always
+    /// safe to apply again), then the ring buffer past `since`, so a viewer
+    /// reconnecting to the same session only gets what it missed.
+    async fn subscribe(&mut self, from: SocketAddr, history: bool, since: u64) {
         if let Some(snapshot) = snapshot_chunk() {
-            self.send(
-                from,
-                stream::DATA,
-                &ToViewer::Chunk {
-                    bytes: snapshot.into_bytes(),
-                },
-            )
-            .await;
-        }
-        let chunks = if history {
-            self.handle
-                .ring()
-                .map(|r| lock(r).history())
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        let mut last_seq = self
-            .handle
-            .ring()
-            .and_then(|r| lock(r).history().last().map(|(s, _)| *s))
-            .unwrap_or(0);
-        for (seq, chunk) in chunks {
-            last_seq = last_seq.max(seq);
             let message = ToViewer::Chunk {
-                bytes: chunk.as_bytes().to_vec(),
+                seq: 0,
+                bytes: snapshot.into_bytes(),
             };
             self.send(from, stream::DATA, &message).await;
+        }
+        let ring = self
+            .handle
+            .ring()
+            .map(|r| lock(r).history())
+            .unwrap_or_default();
+        let mut last_seq = ring.last().map_or(0, |(s, _)| *s).max(since);
+        if history {
+            for (seq, chunk) in ring.into_iter().filter(|(seq, _)| *seq > since) {
+                last_seq = last_seq.max(seq);
+                let message = ToViewer::Chunk {
+                    seq,
+                    bytes: chunk.as_bytes().to_vec(),
+                };
+                self.send(from, stream::DATA, &message).await;
+            }
         }
         self.send(from, stream::DATA, &ToViewer::HistoryEnd).await;
         if let Some(viewer) = self.viewers.get_mut(&from) {
@@ -341,6 +411,7 @@ impl Server {
             return;
         }
         let message = ToViewer::Chunk {
+            seq,
             bytes: chunk.as_bytes().to_vec(),
         };
         for addr in targets {
@@ -348,7 +419,7 @@ impl Server {
         }
     }
 
-    fn start_device_recording(&self) {
+    fn start_device_recording(&mut self, owner: SocketAddr) {
         let mut state = lock(&self.device);
         if state.writer.is_some() {
             return;
@@ -366,11 +437,14 @@ impl Server {
             }
             state.writer = Some(writer);
             state.path = Some(path);
+            drop(state);
+            self.device_owner = Some(owner);
         }
     }
 
-    async fn upload_device_recording(&self, to: SocketAddr) {
+    async fn upload_device_recording(&mut self, to: SocketAddr) {
         self.handle.flush();
+        self.device_owner = None;
         let path = {
             let mut state = lock(&self.device);
             if let Some(mut writer) = state.writer.take() {
@@ -396,9 +470,35 @@ impl Server {
         let _ = std::fs::remove_file(path);
     }
 
+    /// Drops a viewer; an on-device recording it started is discarded so a
+    /// lost viewer never fills the device's storage.
+    fn forget(&mut self, addr: SocketAddr) {
+        self.viewers.remove(&addr);
+        if self.device_owner == Some(addr) {
+            self.device_owner = None;
+            let path = {
+                let mut state = lock(&self.device);
+                state.writer = None;
+                state.path.take()
+            };
+            if let Some(path) = path {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+
     fn expire(&mut self) {
-        self.viewers
-            .retain(|_, v| v.last_seen.is_some_and(|t| t.elapsed() < VIEWER_TIMEOUT));
+        let silent: Vec<SocketAddr> = self
+            .viewers
+            .iter()
+            .filter(|(_, v)| v.last_seen.is_none_or(|t| t.elapsed() >= VIEWER_TIMEOUT))
+            .map(|(a, _)| *a)
+            .collect();
+        for addr in silent {
+            self.forget(addr);
+        }
+        self.attempts
+            .retain(|_, a| a.locked_for().is_some() || a.failures % MAX_PAIR_ATTEMPTS != 0);
     }
 }
 
@@ -490,9 +590,11 @@ pub(crate) fn start(config: &LiveConfig, handle: &Handle) -> io::Result<NetHandl
                     auth,
                     code: code_for_task,
                     viewers: HashMap::new(),
+                    attempts: HashMap::new(),
                     handle,
                     device,
                     device_dir,
+                    device_owner: None,
                 };
                 let mut ticker = tokio::time::interval(Duration::from_secs(5));
                 loop {

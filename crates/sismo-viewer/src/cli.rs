@@ -137,6 +137,9 @@ pub struct LiveArgs {
     /// Pairing code shown by the app (asked for when needed).
     #[arg(long)]
     pub code: Option<String>,
+    /// Give up when the connection drops instead of reconnecting.
+    #[arg(long)]
+    pub no_reconnect: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -457,41 +460,139 @@ fn ask_code() -> Result<String, CliError> {
     Ok(line.trim().to_owned())
 }
 
-/// Connects, pairs when required and subscribes.
-fn connect(live: &LiveArgs, history: bool) -> Result<Connection, CliError> {
-    let addr = resolve(&live.target)?;
-    let viewer = format!("sismo-cli {}", env!("CARGO_PKG_VERSION"));
-    let conn = Connection::open(addr, viewer)?;
-    loop {
-        match conn.events.recv_timeout(Duration::from_secs(10)) {
-            Ok(ClientEvent::Welcome {
-                session,
-                pairing_required,
-                ..
-            }) => {
-                eprintln!(
-                    "connected to {} {} on {} ({})",
-                    session.app, session.app_version, session.device, session.platform
-                );
-                if !pairing_required {
-                    break;
+/// What a [`LiveLink`] hands back.
+enum Received {
+    Chunk(Vec<u8>),
+    HistoryEnd,
+    /// The app is a new run (it restarted): what came before belongs to the
+    /// old one.
+    Restarted,
+}
+
+/// A connection to a live app that reconnects by itself (backoff 1–30 s,
+/// finding the app again by name) and asks only for what it missed.
+struct LiveLink<'a> {
+    live: &'a LiveArgs,
+    history: bool,
+    conn: Connection,
+    session_id: u64,
+    last_seq: u64,
+}
+
+impl<'a> LiveLink<'a> {
+    fn open(live: &'a LiveArgs, history: bool) -> Result<Self, CliError> {
+        let mut link = Self {
+            live,
+            history,
+            conn: Self::dial(live)?,
+            session_id: 0,
+            last_seq: 0,
+        };
+        link.handshake()?;
+        Ok(link)
+    }
+
+    fn dial(live: &LiveArgs) -> Result<Connection, CliError> {
+        let addr = resolve(&live.target)?;
+        let viewer = format!("sismo-cli {}", env!("CARGO_PKG_VERSION"));
+        Ok(Connection::open(addr, viewer)?)
+    }
+
+    /// Waits for the welcome, pairs when asked and subscribes. Returns
+    /// whether the app is a different run than the one before.
+    fn handshake(&mut self) -> Result<bool, CliError> {
+        let mut restarted = false;
+        loop {
+            match self.conn.events.recv_timeout(Duration::from_secs(10)) {
+                Ok(ClientEvent::Welcome {
+                    session,
+                    pairing_required,
+                    ..
+                }) => {
+                    if self.session_id == 0 {
+                        eprintln!(
+                            "connected to {} {} on {} ({})",
+                            session.app, session.app_version, session.device, session.platform
+                        );
+                    } else if session.session_id != self.session_id {
+                        eprintln!("the app restarted");
+                        restarted = true;
+                        self.last_seq = 0;
+                    } else {
+                        eprintln!("reconnected");
+                    }
+                    self.session_id = session.session_id;
+                    if !pairing_required {
+                        break;
+                    }
+                    let code = match &self.live.code {
+                        Some(code) => code.clone(),
+                        None => ask_code()?,
+                    };
+                    self.conn.send(Cmd::Pair(code));
                 }
-                let code = match &live.code {
-                    Some(code) => code.clone(),
-                    None => ask_code()?,
-                };
-                conn.send(Cmd::Pair(code));
+                Ok(ClientEvent::Paired) => break,
+                Ok(ClientEvent::PairRejected(reason) | ClientEvent::Lost(reason)) => {
+                    return Err(CliError::Live(reason));
+                }
+                Ok(_) => {}
+                Err(_) => return Err(CliError::Live("the app did not answer".into())),
             }
-            Ok(ClientEvent::Paired) => break,
-            Ok(ClientEvent::PairRejected(reason) | ClientEvent::Lost(reason)) => {
-                return Err(CliError::Live(reason));
+        }
+        self.conn.send(Cmd::Subscribe {
+            history: self.history || self.last_seq > 0,
+            since: self.last_seq,
+        });
+        Ok(restarted)
+    }
+
+    /// Next item, waiting up to `timeout`; `Ok(None)` on timeout. A lost
+    /// connection is retried until it comes back, unless reconnecting is off.
+    fn next(&mut self, timeout: Duration) -> Result<Option<Received>, CliError> {
+        loop {
+            match self.conn.events.recv_timeout(timeout) {
+                Ok(ClientEvent::Chunk { seq, bytes }) => {
+                    if seq != 0 && seq <= self.last_seq {
+                        continue;
+                    }
+                    self.last_seq = self.last_seq.max(seq);
+                    return Ok(Some(Received::Chunk(bytes)));
+                }
+                Ok(ClientEvent::HistoryEnd) => return Ok(Some(Received::HistoryEnd)),
+                Ok(ClientEvent::Lost(reason)) => {
+                    if self.live.no_reconnect {
+                        return Err(CliError::Live(reason));
+                    }
+                    eprintln!("lost: {reason}; reconnecting…");
+                    if self.reconnect()? {
+                        return Ok(Some(Received::Restarted));
+                    }
+                }
+                Ok(_) => {}
+                Err(flume::RecvTimeoutError::Timeout) => return Ok(None),
+                Err(flume::RecvTimeoutError::Disconnected) => {
+                    return Err(CliError::Live("connection closed".into()));
+                }
             }
-            Ok(_) => {}
-            Err(_) => return Err(CliError::Live("the app did not answer".into())),
         }
     }
-    conn.send(Cmd::Subscribe { history });
-    Ok(conn)
+
+    fn reconnect(&mut self) -> Result<bool, CliError> {
+        let mut delay = Duration::from_secs(1);
+        loop {
+            std::thread::sleep(delay);
+            delay = (delay * 2).min(Duration::from_secs(30));
+            let Ok(conn) = Self::dial(self.live) else {
+                continue;
+            };
+            self.conn = conn;
+            match self.handshake() {
+                Ok(restarted) => return Ok(restarted),
+                Err(CliError::Live(reason)) => eprintln!("still lost: {reason}"),
+                Err(error) => return Err(error),
+            }
+        }
+    }
 }
 
 fn record(
@@ -504,10 +605,12 @@ fn record(
         .map(parse_duration)
         .transpose()?
         .map(Duration::from_nanos);
-    let conn = connect(live, history)?;
+    let mut link = LiveLink::open(live, history)?;
     let output =
         output.unwrap_or_else(|| PathBuf::from(format!("{}.sismo", live.target.replace(':', "-"))));
-    let mut writer = FileWriter::new(BufWriter::new(File::create(&output)?))?;
+    let mut path = output.clone();
+    let mut writer = FileWriter::new(BufWriter::new(File::create(&path)?))?;
+    let mut runs = 1u32;
     let started = Instant::now();
     let mut chunks = 0u64;
     loop {
@@ -517,20 +620,34 @@ fn record(
         if stop_after.is_some() && left.is_zero() {
             break;
         }
-        match conn.events.recv_timeout(left.min(Duration::from_secs(1))) {
-            Ok(ClientEvent::Chunk(bytes)) => {
+        match link.next(left.min(Duration::from_secs(1))) {
+            Ok(Some(Received::Chunk(bytes))) => {
                 if let Ok(chunk) = Chunk::from_bytes(bytes) {
                     writer.write_chunk(&chunk)?;
                     writer.flush()?;
                     chunks += 1;
                 }
             }
-            Ok(ClientEvent::HistoryEnd) => eprintln!("history received, recording live…"),
-            Ok(ClientEvent::Lost(reason)) => {
-                eprintln!("stopped: {reason}");
+            Ok(Some(Received::HistoryEnd)) => eprintln!("history received, recording live…"),
+            Ok(Some(Received::Restarted)) => {
+                // One file per run of the app: mixing two runs would break
+                // the timeline.
+                writer.flush()?;
+                eprintln!("{} → {}", Bytes(writer.bytes_written()), path.display());
+                runs += 1;
+                path = output.with_file_name(format!(
+                    "{}-run{runs}.sismo",
+                    output
+                        .file_stem()
+                        .map_or_else(|| "recording".into(), |s| s.to_string_lossy().into_owned())
+                ));
+                writer = FileWriter::new(BufWriter::new(File::create(&path)?))?;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("stopped: {error}");
                 break;
             }
-            Ok(_) | Err(_) => {}
         }
     }
     writer.flush()?;
@@ -538,19 +655,19 @@ fn record(
         "{} chunks · {} → {}",
         chunks,
         Bytes(writer.bytes_written()),
-        output.display()
+        path.display()
     );
     Ok(())
 }
 
 fn tail(live: &LiveArgs, query: &str) -> Result<(), CliError> {
     let query = Query::parse(query)?;
-    let conn = connect(live, false)?;
+    let mut link = LiveLink::open(live, false)?;
     let mut session = Session::default();
     let mut printed = 0usize;
     loop {
-        match conn.events.recv() {
-            Ok(ClientEvent::Chunk(bytes)) => {
+        match link.next(Duration::from_secs(1))? {
+            Some(Received::Chunk(bytes)) => {
                 if session.ingest_chunk(bytes).is_err() {
                     continue;
                 }
@@ -561,9 +678,12 @@ fn tail(live: &LiveArgs, query: &str) -> Result<(), CliError> {
                 }
                 printed = session.logs.len();
             }
-            Ok(ClientEvent::Lost(reason)) => return Err(CliError::Live(reason)),
-            Ok(_) => {}
-            Err(_) => return Ok(()),
+            Some(Received::Restarted) => {
+                println!("--- the app restarted ---");
+                session = Session::default();
+                printed = 0;
+            }
+            Some(Received::HistoryEnd) | None => {}
         }
     }
 }

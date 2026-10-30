@@ -99,9 +99,12 @@ pub enum ToRecorder {
     Pair {
         code: String,
     },
-    /// Start streaming; `history` also replays the recorder's ring buffer.
+    /// Start streaming; `history` also replays the recorder's ring buffer,
+    /// only the chunks after `since` (a [`ToViewer::Chunk`] seq the viewer
+    /// already has, `0` for none), so a reconnect never repeats data.
     Subscribe {
         history: bool,
+        since: u64,
     },
     SetFilter {
         filter: String,
@@ -130,8 +133,10 @@ pub enum ToViewer {
     PairRejected {
         reason: String,
     },
-    /// A sealed chunk (see [`crate::Chunk`]).
+    /// A sealed chunk (see [`crate::Chunk`]) and its position in the
+    /// recorder's stream; seqs only grow within one session.
     Chunk {
+        seq: u64,
         bytes: Vec<u8>,
     },
     HistoryEnd,
@@ -177,7 +182,9 @@ impl ToRecorder {
         match self {
             ToRecorder::Hello { viewer } => enc.u8(tag::HELLO).str(viewer),
             ToRecorder::Pair { code } => enc.u8(tag::PAIR).str(code),
-            ToRecorder::Subscribe { history } => enc.u8(tag::SUBSCRIBE).bool(*history),
+            ToRecorder::Subscribe { history, since } => {
+                enc.u8(tag::SUBSCRIBE).bool(*history).uvar(*since)
+            }
             ToRecorder::SetFilter { filter } => enc.u8(tag::SET_FILTER).str(filter),
             ToRecorder::Marker { note } => enc.u8(tag::MARKER).str(note),
             ToRecorder::StartDeviceRecording => enc.u8(tag::START_DEVICE),
@@ -201,6 +208,7 @@ impl ToRecorder {
             },
             tag::SUBSCRIBE => ToRecorder::Subscribe {
                 history: dec.bool()?,
+                since: dec.uvar()?,
             },
             tag::SET_FILTER => ToRecorder::SetFilter {
                 filter: dec.string()?,
@@ -243,8 +251,8 @@ impl ToViewer {
             ToViewer::PairRejected { reason } => {
                 enc.u8(tag::PAIR_REJECTED).str(reason);
             }
-            ToViewer::Chunk { bytes } => {
-                enc.u8(tag::CHUNK).bytes(bytes);
+            ToViewer::Chunk { seq, bytes } => {
+                enc.u8(tag::CHUNK).uvar(*seq).bytes(bytes);
             }
             ToViewer::HistoryEnd => {
                 enc.u8(tag::HISTORY_END);
@@ -293,6 +301,7 @@ impl ToViewer {
                 reason: dec.string()?,
             },
             tag::CHUNK => ToViewer::Chunk {
+                seq: dec.uvar()?,
                 bytes: dec.bytes()?.to_vec(),
             },
             tag::HISTORY_END => ToViewer::HistoryEnd,
@@ -342,7 +351,10 @@ mod tests {
             ToRecorder::Pair {
                 code: "123456".into(),
             },
-            ToRecorder::Subscribe { history: true },
+            ToRecorder::Subscribe {
+                history: true,
+                since: 41,
+            },
             ToRecorder::SetFilter {
                 filter: "info".into(),
             },
@@ -359,6 +371,7 @@ mod tests {
                 history_bytes: 10,
             },
             ToViewer::Chunk {
+                seq: 7,
                 bytes: vec![1, 2, 3],
             },
             ToViewer::DeviceRecording {

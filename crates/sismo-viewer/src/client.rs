@@ -12,6 +12,8 @@ use zudp::{Discovery, DiscoveryConfig, Keypair, RawBytes, Zudp};
 /// Silence after which a connection counts as lost.
 const LOST_AFTER: Duration = Duration::from_secs(6);
 const PING_EVERY: Duration = Duration::from_secs(2);
+/// Probes per scan stream before it is recreated (see [`Scanner::start`]).
+const RESCAN_PROBES: u32 = 4;
 
 /// An app announcing itself on the LAN.
 #[derive(Debug, Clone)]
@@ -32,7 +34,10 @@ pub enum ClientEvent {
     },
     Paired,
     PairRejected(String),
-    Chunk(Vec<u8>),
+    Chunk {
+        seq: u64,
+        bytes: Vec<u8>,
+    },
     HistoryEnd,
     Filter(String),
     DeviceRecording {
@@ -48,7 +53,11 @@ pub enum ClientEvent {
 #[derive(Debug, Clone)]
 pub enum Command {
     Pair(String),
-    Subscribe { history: bool },
+    /// `since`: last chunk seq already received from this session, `0` for none.
+    Subscribe {
+        history: bool,
+        since: u64,
+    },
     SetFilter(String),
     Marker(String),
     StartDeviceRecording,
@@ -101,34 +110,42 @@ impl Scanner {
             .name("sismo-scan".into())
             .spawn(move || {
                 runtime.block_on(async move {
-                    let config =
-                        DiscoveryConfig::new(DISCOVERY_APP_ID, 0).probe_interval(probe_every);
-                    let mut scan = match Discovery::scan_stream::<RawBytes>(config).await {
-                        Ok(scan) => scan,
-                        Err(error) => {
-                            let _ = tx.send(Err(error.to_string()));
-                            return;
-                        }
-                    };
+                    // A scan stream reports each address once, so a restarted
+                    // app (same address, new session) would never show up
+                    // again; a fresh stream every few probes reports
+                    // everyone still announcing and keeps `seen` current.
+                    let rescan = probe_every.saturating_mul(RESCAN_PROBES);
                     loop {
-                        match scan.next().await {
-                            Ok(peer) => {
-                                let Ok(beacon) = Beacon::decode(&peer.meta.0) else {
-                                    continue;
-                                };
-                                let found = Discovered {
-                                    addr: SocketAddr::new(peer.data_addr.ip(), beacon.port),
-                                    beacon,
-                                    seen: Instant::now(),
-                                };
-                                if tx.send(Ok(found)).is_err() {
-                                    return;
-                                }
-                            }
+                        let config =
+                            DiscoveryConfig::new(DISCOVERY_APP_ID, 0).probe_interval(probe_every);
+                        let mut scan = match Discovery::scan_stream::<RawBytes>(config).await {
+                            Ok(scan) => scan,
                             Err(error) => {
                                 if tx.send(Err(error.to_string())).is_err() {
                                     return;
                                 }
+                                tokio::time::sleep(rescan).await;
+                                continue;
+                            }
+                        };
+                        let until = tokio::time::Instant::now() + rescan;
+                        while let Ok(next) = tokio::time::timeout_at(until, scan.next()).await {
+                            let event = match next {
+                                Ok(peer) => {
+                                    let Ok(beacon) = Beacon::decode(&peer.meta.0) else {
+                                        continue;
+                                    };
+                                    Ok(Discovered {
+                                        addr: SocketAddr::new(peer.data_addr.ip(), beacon.port),
+                                        beacon,
+                                        seen: Instant::now(),
+                                    })
+                                }
+                                // One bad packet must not stop discovery.
+                                Err(error) => Err(error.to_string()),
+                            };
+                            if tx.send(event).is_err() {
+                                return;
                             }
                         }
                     }
@@ -197,7 +214,7 @@ impl Connection {
                                         ClientEvent::Welcome { session, pairing_required, filter, history_bytes },
                                     ToViewer::Paired => ClientEvent::Paired,
                                     ToViewer::PairRejected { reason } => ClientEvent::PairRejected(reason),
-                                    ToViewer::Chunk { bytes } => ClientEvent::Chunk(bytes),
+                                    ToViewer::Chunk { seq, bytes } => ClientEvent::Chunk { seq, bytes },
                                     ToViewer::HistoryEnd => ClientEvent::HistoryEnd,
                                     ToViewer::Filter { filter } => ClientEvent::Filter(filter),
                                     ToViewer::DeviceRecording { offset, total, bytes } =>
@@ -219,7 +236,7 @@ impl Connection {
                                         return;
                                     }
                                     Some(Command::Pair(code)) => ToRecorder::Pair { code },
-                                    Some(Command::Subscribe { history }) => ToRecorder::Subscribe { history },
+                                    Some(Command::Subscribe { history, since }) => ToRecorder::Subscribe { history, since },
                                     Some(Command::SetFilter(filter)) => ToRecorder::SetFilter { filter },
                                     Some(Command::Marker(note)) => ToRecorder::Marker { note },
                                     Some(Command::StartDeviceRecording) => ToRecorder::StartDeviceRecording,
@@ -231,6 +248,8 @@ impl Connection {
                             }
                             _ = ping.tick() => {
                                 if last_heard.elapsed() > LOST_AFTER {
+                                    // Tell the app, in case only its replies are lost.
+                                    let _ = conn.send_stream(wire(ToRecorder::Bye), stream::CONTROL).await;
                                     return lost("the app stopped answering".into());
                                 }
                                 nonce += 1;

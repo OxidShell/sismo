@@ -64,6 +64,9 @@ pub enum Dialog {
     ClearSession,
 }
 
+/// An app not heard from in this long is dropped from the list.
+const STALE_AFTER: Duration = Duration::from_secs(12);
+
 /// Transient notice in the bottom-right corner.
 #[derive(Debug, Clone)]
 pub struct Toast {
@@ -165,12 +168,21 @@ impl Workspace {
     }
 
     pub fn connect(&mut self, addr: SocketAddr) {
+        // An open tab for this app: reuse it, reconnecting it if it was lost
+        // (the app may have restarted at the same address).
         if let Some(index) = self
             .sessions
             .iter()
             .position(|s| s.live().is_some_and(|l| l.addr == addr))
         {
             self.active = Some(index);
+            let lost = matches!(
+                self.sessions[index].live().map(|l| &l.status),
+                Some(crate::workspace::LiveStatus::Lost { .. })
+            );
+            if lost && let Err(error) = self.sessions[index].reconnect_to(addr) {
+                self.notify("toast-connect-failed", error.to_string(), None, true);
+            }
             return;
         }
         match SessionView::connect(self.next_id, addr) {
@@ -180,6 +192,52 @@ impl Workspace {
                 self.active = Some(self.sessions.len() - 1);
             }
             Err(error) => self.notify("toast-connect-failed", error.to_string(), None, true),
+        }
+    }
+
+    /// Where the app a lost tab followed announces itself now: the same
+    /// identity (key fingerprint, or app and device) may come back on
+    /// another port or address.
+    fn find_again(&self, view: &SessionView) -> Option<SocketAddr> {
+        let info = &view.session.info;
+        let fingerprint = view.live().and_then(|l| {
+            self.discovered
+                .iter()
+                .find(|d| d.addr == l.addr)
+                .map(|d| d.beacon.fingerprint.clone())
+        });
+        self.discovered
+            .iter()
+            .filter(|d| d.beacon.app == info.app && d.beacon.device == info.device)
+            .max_by_key(|d| {
+                (
+                    fingerprint.as_deref() == Some(d.beacon.fingerprint.as_str()),
+                    d.seen,
+                )
+            })
+            .map(|d| d.addr)
+    }
+
+    /// Reconnects lost live tabs whose backoff ran out.
+    fn retry_lost(&mut self) {
+        let due: Vec<(usize, Option<SocketAddr>)> = self
+            .sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.live().is_some_and(|l| l.retry.due()))
+            .map(|(i, s)| (i, self.find_again(s)))
+            .collect();
+        for (index, found) in due {
+            let session = &mut self.sessions[index];
+            let result = match found {
+                Some(addr) => session.reconnect_to(addr),
+                None => session.reconnect(),
+            };
+            if result.is_err()
+                && let Some(live) = session.live_mut()
+            {
+                live.retry.schedule();
+            }
         }
     }
 
@@ -230,6 +288,14 @@ impl Workspace {
                     .is_some_and(|c| !c.events.is_empty())
             })
             || self
+                .sessions
+                .iter()
+                .any(|s| s.live().is_some_and(|l| l.retry.due()))
+            || self
+                .discovered
+                .iter()
+                .any(|d| d.seen.elapsed() > STALE_AFTER)
+            || self
                 .toast
                 .as_ref()
                 .is_some_and(|t| t.shown.elapsed() > Duration::from_secs(8))
@@ -247,6 +313,10 @@ impl Workspace {
                 }
             }
         }
+        // Apps that stopped announcing are gone (the scanner refreshes the
+        // living every few seconds).
+        self.discovered.retain(|d| d.seen.elapsed() <= STALE_AFTER);
+        self.retry_lost();
         let mut saved: Vec<Saved> = Vec::new();
         let active_id = self.active.map(|i| self.sessions_id(i));
         let mut wants_pairing = false;

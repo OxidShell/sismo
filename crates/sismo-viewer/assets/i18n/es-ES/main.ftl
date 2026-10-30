@@ -91,6 +91,7 @@ shell-retry = Reintentar
 shell-enter-code = Ingresar código…
 shell-lost-banner = Se perdió la conexión ({ $reason }) · lo recibido hasta { $until } sigue aquí
 shell-retry-now = Reintentar ahora
+shell-retrying = reintento en { $seconds } s
 shell-save-received = Guardar lo recibido…
 shell-paused-banner = Vista congelada · la app sigue mandando y el visor guarda en segundo plano · Espacio reanuda
 
