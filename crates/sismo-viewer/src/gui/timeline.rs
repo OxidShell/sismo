@@ -10,6 +10,7 @@ use sismo_analysis::{Group, GroupSplit, Query, SLOW_FRAME_NS, Session, percentil
 
 use super::Workspace;
 use super::draw::Scene;
+use super::i18n::tr;
 use super::theme::{self, Rgb};
 use super::widgets::{Kind, button, caption, hline, mono, swatch, text};
 use crate::workspace::{SessionView, Tab};
@@ -132,7 +133,7 @@ fn draw_strip(p: &mut Scene, view: &SessionView, splits: &[GroupSplit], w: f32, 
     p.rect(0., 0., w, h, theme::BG0);
     if frames.is_empty() {
         p.text(
-            "Sin frames: llama a sismo::frame_mark() o usa el plugin de Freya",
+            &tr!("timeline-no-frames"),
             PAD,
             h / 2. - 8.,
             12.,
@@ -528,13 +529,13 @@ fn detail(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
                             .child(mono(session.name(callsite), 15., theme::TEXT).font_weight(600)),
                     )
                     .child(mono(
-                        format!(
-                            "{}:{}   ·   crate {} ({})   ·   hilo {}",
-                            def.map_or("?", |d| d.file.as_str()),
-                            def.map_or(0, |d| d.line),
-                            session.crate_of(callsite),
-                            theme::group_label(session.group_of(callsite)),
-                            thread.name
+                        tr!(
+                            "timeline-span-location",
+                            file = def.map_or("?", |d| d.file.as_str()),
+                            line = def.map_or(0, |d| d.line).to_string(),
+                            krate = session.crate_of(callsite),
+                            group = theme::group_label(session.group_of(callsite)),
+                            thread = thread.name.as_str(),
                         ),
                         12.,
                         theme::TEXT3,
@@ -545,15 +546,18 @@ fn detail(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
                             .content(Content::flex())
                             .padding((6., 0.))
                             .child(kv(
-                                "Duración",
+                                &tr!("timeline-duration"),
                                 Nanos(span.duration(session.end)).to_string(),
                             ))
-                            .child(kv("Tiempo propio", Nanos(span.self_ns).to_string()))
-                            .child(kv("Hijos", children.to_string()))
-                            .child(kv("Inicio", Clock(span.start).to_string()))
+                            .child(kv(
+                                &tr!("timeline-self-time"),
+                                Nanos(span.self_ns).to_string(),
+                            ))
+                            .child(kv(&tr!("timeline-children"), children.to_string()))
+                            .child(kv(&tr!("timeline-start"), Clock(span.start).to_string()))
                             .maybe(session.allocations, |r| {
                                 r.child(kv(
-                                    "Allocs",
+                                    &tr!("timeline-allocs"),
                                     format!(
                                         "{} · {}",
                                         sismo_analysis::units::Bytes(span.alloc_bytes),
@@ -567,17 +571,25 @@ fn detail(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
                             .horizontal()
                             .content(Content::flex())
                             .spacing(8.)
-                            .child(button("Ver en Funciones", Kind::Secondary, move |_| {
-                                if let Some(v) = ws.write().active_mut() {
-                                    v.selected_function = Some(callsite);
-                                    v.tab = Tab::Functions;
-                                }
-                            }))
-                            .child(button("Abrir en Flamegraph", Kind::Secondary, move |_| {
-                                if let Some(v) = ws.write().active_mut() {
-                                    v.tab = Tab::Flamegraph;
-                                }
-                            })),
+                            .child(button(
+                                tr!("common-show-in-functions"),
+                                Kind::Secondary,
+                                move |_| {
+                                    if let Some(v) = ws.write().active_mut() {
+                                        v.selected_function = Some(callsite);
+                                        v.tab = Tab::Functions;
+                                    }
+                                },
+                            ))
+                            .child(button(
+                                tr!("timeline-open-in-flamegraph"),
+                                Kind::Secondary,
+                                move |_| {
+                                    if let Some(v) = ws.write().active_mut() {
+                                        v.tab = Tab::Flamegraph;
+                                    }
+                                },
+                            )),
                     ),
             )
             .child(
@@ -585,12 +597,12 @@ fn detail(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
                     .width(Size::px(380.))
                     .spacing(6.)
                     .child(text(
-                        format!(
-                            "En la sesión · {} llamadas · p50 {} · p95 {} · max {}",
-                            calls.len(),
-                            Nanos(p50),
-                            Nanos(p95),
-                            Nanos(max)
+                        tr!(
+                            "timeline-session-calls",
+                            count = calls.len().to_string(),
+                            p50 = Nanos(p50).to_string(),
+                            p95 = Nanos(p95).to_string(),
+                            max = Nanos(max).to_string(),
                         ),
                         11.,
                         theme::TEXT3,
@@ -650,14 +662,14 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
         .cross_align(Alignment::Center)
         .spacing(16.)
         .padding((10., 16., 0., 16.))
-        .child(text("Frames", 13., theme::TEXT).font_weight(600))
+        .child(text(tr!("timeline-frames"), 13., theme::TEXT).font_weight(600))
         .child(mono(
-            format!(
-                "{} frames   p50 {}   p95 {}   > 16.6 ms: {}",
-                summary.count,
-                Nanos(summary.p50_ns),
-                Nanos(summary.p95_ns),
-                summary.slow
+            tr!(
+                "timeline-frames-summary",
+                count = summary.count.to_string(),
+                p50 = Nanos(summary.p50_ns).to_string(),
+                p95 = Nanos(summary.p95_ns).to_string(),
+                slow = summary.slow.to_string(),
             ),
             12.,
             theme::TEXT2,
@@ -673,11 +685,7 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                 .child(text(theme::group_label(*g), 11., theme::TEXT2))
                 .into_element()
         }))
-        .child(text(
-            "arrastrar = rango · W/S zoom · A/D mover · N siguiente lento",
-            11.,
-            theme::TEXT3,
-        ));
+        .child(text(tr!("timeline-hint"), 11., theme::TEXT3));
 
     let strip = rect()
         .width(Size::fill())
@@ -869,7 +877,7 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                 .horizontal()
                 .content(Content::flex())
                 .padding((6., 16., 0., 16.))
-                .child(caption("Hilos").width(Size::flex(1.)))
+                .child(caption(&tr!("shell-threads")).width(Size::flex(1.)))
                 .child(range_label),
         )
         .child(ScrollView::new().height(Size::flex(1.)).child(lanes_el))

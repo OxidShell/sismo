@@ -5,6 +5,7 @@ use sismo_analysis::{Group, KEYS, Session};
 use sismo_format::{Level, Source};
 
 use super::Workspace;
+use super::i18n::tr;
 use super::theme;
 use super::widgets::{bordered, caption, mono, swatch, text};
 
@@ -32,7 +33,7 @@ fn values(session: &Session, key: &str, prefix: &str) -> Vec<Suggestion> {
                 .map(|g| Suggestion {
                     insert: g.as_str().to_owned(),
                     title: g.as_str().to_owned(),
-                    detail: "grupo".into(),
+                    detail: tr!("query-group"),
                     dot: Some(theme::group(*g)),
                 })
                 .collect();
@@ -44,7 +45,7 @@ fn values(session: &Session, key: &str, prefix: &str) -> Vec<Suggestion> {
                     .map(|c| {
                         let group = session.groups.classify(&c);
                         Suggestion {
-                            detail: theme::group_label(group).into(),
+                            detail: theme::group_label(group),
                             dot: Some(theme::group(group)),
                             insert: c.clone(),
                             title: c,
@@ -60,7 +61,7 @@ fn values(session: &Session, key: &str, prefix: &str) -> Vec<Suggestion> {
             .map(|t| Suggestion {
                 insert: t.name.clone(),
                 title: t.name.clone(),
-                detail: format!("{} spans", t.spans.len()),
+                detail: tr!("query-thread-spans", count = t.spans.len().to_string()),
                 dot: None,
             })
             .collect(),
@@ -88,9 +89,9 @@ fn values(session: &Session, key: &str, prefix: &str) -> Vec<Suggestion> {
             .filter(|v| matches(v))
             .map(|v| Suggestion {
                 detail: if v.ends_with('+') {
-                    "ese nivel o más grave".into()
+                    tr!("query-level-or-worse")
                 } else {
-                    "solo ese nivel".into()
+                    tr!("query-level-only")
                 },
                 dot: Level::parse(v.trim_end_matches('+')).map(theme::level),
                 insert: v.clone(),
@@ -110,7 +111,7 @@ fn values(session: &Session, key: &str, prefix: &str) -> Vec<Suggestion> {
         "frame" => vec![Suggestion {
             insert: "slow".into(),
             title: "slow".into(),
-            detail: "frames sobre 16.6 ms".into(),
+            detail: tr!("query-frame-slow"),
             dot: None,
         }],
         _ => Vec::new(),
@@ -214,7 +215,7 @@ impl Component for QueryBar {
         .a11y_id(a11y)
         .flat()
         .width(Size::px(560.))
-        .placeholder("Filtrar · crate:app dur>2ms level:warn+ \"texto\"")
+        .placeholder(tr!("query-placeholder"))
         .on_pre_key_down(move |e: Event<KeyboardEventData>| match &e.key {
             Key::Named(NamedKey::ArrowDown) => {
                 selected.set((current + 1).min(choices.len().saturating_sub(1)));
@@ -243,21 +244,34 @@ impl Component for QueryBar {
                 .corner_radius(8.)
                 .background(theme::color(theme::BG1))
                 .border(bordered(theme::LINE2))
-                .shadow(Shadow::new().y(8.).blur(24.).color(Color::from_argb(90, 0, 0, 0)))
+                .shadow(
+                    Shadow::new()
+                        .y(8.)
+                        .blur(24.)
+                        .color(Color::from_argb(90, 0, 0, 0)),
+                )
                 .child(rect().padding((6., 6., 4., 6.)).child(caption(
-                    if last_token(&text_state.read()).contains(':') { "Valores" } else { "Filtros" },
+                    &if last_token(&text_state.read()).contains(':') {
+                        tr!("query-values")
+                    } else {
+                        tr!("query-filters")
+                    },
                 )))
                 .children(list.into_iter().enumerate().map(|(i, s)| {
                     let insert = s.insert.clone();
                     rect()
                         .width(Size::fill())
                         .horizontal()
-        .content(Content::flex())
+                        .content(Content::flex())
                         .cross_align(Alignment::Center)
                         .spacing(8.)
                         .padding((6., 8.))
                         .corner_radius(4.)
-                        .background(theme::color(if i == current { theme::BG3 } else { theme::BG1 }))
+                        .background(theme::color(if i == current {
+                            theme::BG3
+                        } else {
+                            theme::BG1
+                        }))
                         .cursor(CursorIcon::Pointer)
                         .on_press(move |_| {
                             let value = apply(&text_state.peek(), &insert);
@@ -270,7 +284,7 @@ impl Component for QueryBar {
                         .into_element()
                 }))
                 .child(rect().padding((6., 6., 2., 6.)).child(text(
-                    "↑↓ elegir · Tab completar · , agrega otro valor · - delante excluye · ? sintaxis",
+                    tr!("query-hint"),
                     11.,
                     theme::TEXT3,
                 )))

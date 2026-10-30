@@ -5,6 +5,7 @@ use sismo_analysis::units::{Clock, Nanos};
 use sismo_analysis::{FunctionStats, SortBy};
 
 use super::Workspace;
+use super::i18n::tr;
 use super::theme;
 use super::timeline::{focus_frame, scene};
 use super::widgets::{Kind, button, caption, hline, mono, swatch, text, vline};
@@ -13,15 +14,17 @@ use crate::workspace::{SessionView, Tab};
 const ROW_H: f32 = 28.;
 const BUCKETS: usize = 40;
 
-/// Column: header, sort key, width, right aligned.
+const HISTORY_COLUMN: &str = "functions-col-history";
+
+/// Column: header key, sort key, width, right aligned.
 const COLUMNS: [(&str, Option<SortBy>, f32); 7] = [
-    ("Llamadas", Some(SortBy::Calls), 80.),
-    ("Total", Some(SortBy::Total), 86.),
-    ("Propio", Some(SortBy::SelfTime), 86.),
-    ("p50", None, 76.),
-    ("p95", Some(SortBy::P95), 76.),
-    ("Máx", Some(SortBy::Max), 76.),
-    ("Histórico p95", None, 176.),
+    ("functions-col-calls", Some(SortBy::Calls), 80.),
+    ("functions-col-total", Some(SortBy::Total), 86.),
+    ("functions-col-self", Some(SortBy::SelfTime), 86.),
+    ("functions-col-p50", None, 76.),
+    ("functions-col-p95", Some(SortBy::P95), 76.),
+    ("functions-col-max", Some(SortBy::Max), 76.),
+    (HISTORY_COLUMN, None, 176.),
 ];
 
 type Column = (&'static str, Option<SortBy>, f32);
@@ -31,7 +34,7 @@ type Column = (&'static str, Option<SortBy>, f32);
 fn columns(allocations: bool) -> [Column; 7] {
     let mut cols = COLUMNS;
     if allocations {
-        cols[3] = ("Alloc", Some(SortBy::Alloc), 86.);
+        cols[3] = ("functions-col-alloc", Some(SortBy::Alloc), 86.);
     }
     cols
 }
@@ -100,7 +103,7 @@ fn header(mut ws: State<Workspace>, sort: SortBy, allocations: bool) -> Rect {
                 })
                 .child(
                     text(
-                        "Función",
+                        tr!("functions-col-function"),
                         11.,
                         if sort == SortBy::Name {
                             theme::TEXT
@@ -116,7 +119,7 @@ fn header(mut ws: State<Workspace>, sort: SortBy, allocations: bool) -> Rect {
 
             rect()
                 .width(Size::px(width))
-                .main_align(if title.starts_with("Hist") {
+                .main_align(if title == HISTORY_COLUMN {
                     Alignment::Start
                 } else {
                     Alignment::End
@@ -132,9 +135,9 @@ fn header(mut ws: State<Workspace>, sort: SortBy, allocations: bool) -> Rect {
                 .child(
                     text(
                         if on {
-                            format!("{title} ▼")
+                            format!("{} ▼", tr!(title))
                         } else {
-                            (*title).to_owned()
+                            tr!(title)
                         },
                         11.,
                         if on { theme::TEXT } else { theme::TEXT3 },
@@ -221,12 +224,12 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, row: &FunctionStats) -> 
             theme::TEXT3,
         ))
         .child(mono(
-            format!(
-                "{} llamadas · p50 {} · p95 {} · máx {}",
-                row.calls,
-                Nanos(row.p50_ns),
-                Nanos(row.p95_ns),
-                Nanos(row.max_ns)
+            tr!(
+                "functions-detail-calls",
+                count = row.calls.to_string(),
+                p50 = Nanos(row.p50_ns).to_string(),
+                p95 = Nanos(row.p95_ns).to_string(),
+                max = Nanos(row.max_ns).to_string(),
             ),
             11.,
             theme::TEXT2,
@@ -234,18 +237,18 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, row: &FunctionStats) -> 
         .maybe(view.session.allocations, |r| {
             let per_call = row.alloc_bytes / row.calls.max(1);
             r.child(mono(
-                format!(
-                    "alloc {} propio · {} total · {} por llamada · {} allocs",
-                    sismo_analysis::units::Bytes(row.alloc_self_bytes),
-                    sismo_analysis::units::Bytes(row.alloc_bytes),
-                    sismo_analysis::units::Bytes(per_call),
-                    row.alloc_count
+                tr!(
+                    "functions-detail-allocs",
+                    own = sismo_analysis::units::Bytes(row.alloc_self_bytes).to_string(),
+                    total = sismo_analysis::units::Bytes(row.alloc_bytes).to_string(),
+                    per_call = sismo_analysis::units::Bytes(per_call).to_string(),
+                    count = row.alloc_count.to_string(),
                 ),
                 11.,
                 theme::TEXT2,
             ))
         })
-        .child(caption("Histórico · p95 por tramo"))
+        .child(caption(&tr!("functions-history-caption")))
         .child(
             rect()
                 .width(Size::px(348.))
@@ -253,7 +256,7 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, row: &FunctionStats) -> 
                 .corner_radius(4.)
                 .background(chart),
         )
-        .child(caption("Peores llamadas"))
+        .child(caption(&tr!("functions-worst-calls")))
         .children(worst.into_iter().map(|(duration, start, thread)| {
             let frame = session.frames.partition_point(|f| f.end <= start);
             let frame_index = session
@@ -290,13 +293,9 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, row: &FunctionStats) -> 
                 ))
                 .into_element()
         }))
-        .child(text(
-            "Clic en una llamada = abrirla en el Timeline",
-            11.,
-            theme::TEXT3,
-        ))
+        .child(text(tr!("functions-worst-hint"), 11., theme::TEXT3))
         .child(button(
-            "Filtrar a esta función",
+            tr!("functions-filter-to"),
             Kind::Secondary,
             move |_| {
                 let mut w = ws.write();
@@ -400,18 +399,23 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             .padding(24.)
             .spacing(8.)
             .child(
-                text(format!("Nada con «{}»", view.query_text), 13., theme::TEXT).font_weight(600),
+                text(
+                    tr!("functions-empty-title", query = view.query_text.as_str()),
+                    13.,
+                    theme::TEXT,
+                )
+                .font_weight(600),
             )
-            .child(text(
-                "Quita el término más estricto o amplía el rango.",
-                12.,
-                theme::TEXT2,
+            .child(text(tr!("functions-empty-body"), 12., theme::TEXT2))
+            .child(button(
+                tr!("functions-clear-query"),
+                Kind::Secondary,
+                move |_| {
+                    if let Some(v) = ws.write().active_mut() {
+                        v.set_query(String::new());
+                    }
+                },
             ))
-            .child(button("Limpiar consulta", Kind::Secondary, move |_| {
-                if let Some(v) = ws.write().active_mut() {
-                    v.set_query(String::new());
-                }
-            }))
     });
 
     rect()
@@ -429,7 +433,11 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                 .child(list)
                 .child(hline())
                 .child(rect().padding((8., 16.)).child(text(
-                    format!("{count} de {total_functions} funciones · clic en la cabecera ordena · Enter abre el detalle"),
+                    tr!(
+                        "functions-footer",
+                        count = count.to_string(),
+                        total = total_functions.to_string(),
+                    ),
                     11.,
                     theme::TEXT3,
                 ))),
@@ -494,11 +502,15 @@ fn compare_view(
                 ))
                 .into_element()
         }))
-        .child(button("Quitar comparación", Kind::Secondary, move |_| {
-            if let Some(v) = ws.write().active_mut() {
-                v.compare = None;
-            }
-        }));
+        .child(button(
+            tr!("functions-remove-compare"),
+            Kind::Secondary,
+            move |_| {
+                if let Some(v) = ws.write().active_mut() {
+                    v.compare = None;
+                }
+            },
+        ));
     let count = rows.len();
     let list = VirtualScrollView::new_with_data(
         (rows, metric),
@@ -516,8 +528,8 @@ fn compare_view(
                 theme::TEXT3
             };
             let delta = match row.delta {
-                None if row.a.is_none() => "nueva".to_owned(),
-                None => "ya no está".to_owned(),
+                None if row.a.is_none() => tr!("functions-compare-new"),
+                None => tr!("functions-compare-gone"),
                 Some(d) if metric == Metric::Calls => format!("{d:+}"),
                 Some(d) => format!(
                     "{}{}",
@@ -597,7 +609,7 @@ fn compare_view(
         .child(list)
         .child(hline())
         .child(rect().padding((8., 16.)).child(text(
-            format!("{count} funciones · rojo = peor en B · azul = mejor · gris = dentro del ruido (±10%) · ordenado por Δ absoluto"),
+            tr!("functions-compare-footer", count = count.to_string()),
             11.,
             theme::TEXT3,
         )))

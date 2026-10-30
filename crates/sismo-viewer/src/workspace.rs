@@ -36,11 +36,11 @@ impl Tab {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Tab::Timeline => "Timeline",
-            Tab::Flamegraph => "Flamegraph",
-            Tab::Functions => "Funciones",
-            Tab::Logs => "Logs",
-            Tab::Metrics => "Métricas",
+            Tab::Timeline => "tab-timeline",
+            Tab::Flamegraph => "tab-flamegraph",
+            Tab::Functions => "tab-functions",
+            Tab::Logs => "tab-logs",
+            Tab::Metrics => "tab-metrics",
         }
     }
 }
@@ -568,43 +568,6 @@ impl SessionView {
         )?);
         live.status = LiveStatus::Connecting;
         Ok(())
-    }
-}
-
-/// Recently opened recordings, persisted in the config directory.
-#[derive(Debug, Clone, Default)]
-pub struct Recent {
-    pub files: Vec<PathBuf>,
-}
-
-impl Recent {
-    const FILE: &'static str = "recent.txt";
-    const MAX: usize = 12;
-
-    #[must_use]
-    pub fn load() -> Self {
-        let files = crate::client::config_dir()
-            .and_then(|d| std::fs::read_to_string(d.join(Self::FILE)).ok())
-            .map(|s| {
-                s.lines()
-                    .map(PathBuf::from)
-                    .filter(|p| p.exists())
-                    .collect()
-            })
-            .unwrap_or_default();
-        Self { files }
-    }
-
-    pub fn push(&mut self, path: &Path) {
-        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        self.files.retain(|p| *p != path);
-        self.files.insert(0, path);
-        self.files.truncate(Self::MAX);
-        if let Some(dir) = crate::client::config_dir() {
-            let text: Vec<String> = self.files.iter().map(|p| p.display().to_string()).collect();
-            let _ = std::fs::create_dir_all(&dir)
-                .and_then(|()| std::fs::write(dir.join(Self::FILE), text.join("\n")));
-        }
     }
 }
 

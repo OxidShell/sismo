@@ -6,6 +6,7 @@ use freya::prelude::*;
 use sismo_analysis::Group;
 use sismo_analysis::units::{Bytes, Clock, Nanos};
 
+use super::i18n::tr;
 use super::theme::{self, Rgb};
 use super::widgets::{Kind, badge, bordered, button, caption, hline, mono, swatch, text, vline};
 use super::{Dialog, Workspace, dialogs, flame, functions, logs, metrics, query_bar, timeline};
@@ -17,24 +18,37 @@ fn top_bar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
         Origin::File { report, .. } => {
             let (start, end) = view.session.span();
             let label = if view.session.panics.is_empty() {
-                format!("archivo · {}", Nanos(end - start))
+                tr!(
+                    "shell-file-badge",
+                    duration = Nanos(end - start).to_string()
+                )
             } else {
-                format!("CAJA NEGRA · panic · {}", Nanos(end - start))
+                tr!(
+                    "shell-black-box-badge",
+                    duration = Nanos(end - start).to_string()
+                )
             };
             if !view.session.panics.is_empty() {
                 badge(label, theme::ERROR, theme::REC_DIM)
             } else if report.damaged.is_some() {
-                badge(format!("{label} · cortado"), theme::WARN, theme::WARN_DIM)
+                badge(
+                    tr!("shell-damaged-badge", label = label),
+                    theme::WARN,
+                    theme::WARN_DIM,
+                )
             } else {
                 badge(label, theme::TEXT2, theme::BG2)
             }
         }
         Origin::Live(live) => match &live.status {
-            LiveStatus::Connecting => badge("CONECTANDO", theme::TEXT2, theme::BG2),
-            LiveStatus::NeedsPairing { .. } => badge("PIDE CÓDIGO", theme::WARN, theme::WARN_DIM),
+            LiveStatus::Connecting => badge(tr!("shell-connecting"), theme::TEXT2, theme::BG2),
+            LiveStatus::NeedsPairing { .. } => {
+                badge(tr!("common-state-needs-code"), theme::WARN, theme::WARN_DIM)
+            }
             LiveStatus::Lost { since, .. } => badge(
                 format!(
-                    "SIN CONEXIÓN {}",
+                    "{} {}",
+                    tr!("shell-lost"),
                     Clock(u64::try_from(since.elapsed().as_nanos()).unwrap_or(0))
                 ),
                 theme::WARN,
@@ -42,7 +56,11 @@ fn top_bar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             ),
             LiveStatus::Streaming => {
                 let (start, end) = view.session.span();
-                let label = if view.paused { "PAUSADO" } else { "EN VIVO" };
+                let label = if view.paused {
+                    tr!("shell-paused")
+                } else {
+                    tr!("shell-live")
+                };
                 badge(
                     format!("{label} {}", Clock(end - start)),
                     theme::TEXT,
@@ -53,11 +71,12 @@ fn top_bar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
     };
     let rec = view.live().and_then(|l| l.recording.as_ref()).map(|r| {
         badge(
-            format!(
-                "REC {} · {} · {} marcadores",
-                Clock(u64::try_from(r.started.elapsed().as_nanos()).unwrap_or(0)),
-                Bytes(r.bytes()),
-                r.markers
+            tr!(
+                "shell-rec-badge",
+                clock =
+                    Clock(u64::try_from(r.started.elapsed().as_nanos()).unwrap_or(0)).to_string(),
+                size = Bytes(r.bytes()).to_string(),
+                markers = r.markers.to_string(),
             ),
             theme::REC,
             theme::REC_DIM,
@@ -80,14 +99,18 @@ fn top_bar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             rect()
                 .cursor(CursorIcon::Pointer)
                 .on_press(move |_| ws.write().active = None)
-                .child(text("Sesiones  ›", 13., theme::TEXT3)),
+                .child(text(
+                    format!("{}  ›", tr!("sessions-title")),
+                    13.,
+                    theme::TEXT3,
+                )),
         )
         .child(text(title, 13., theme::TEXT).font_weight(500).max_lines(1))
         .child(status)
         .child(rect().width(Size::flex(1.)))
         .maybe_child(rec)
         .maybe(is_live && recording, |r| {
-            r.child(button("Marcador  M", Kind::Secondary, move |_| {
+            r.child(button(tr!("shell-marker"), Kind::Secondary, move |_| {
                 ws.write().dialog = Some(Dialog::Marker {
                     text: String::new(),
                 });
@@ -95,7 +118,11 @@ fn top_bar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
         })
         .maybe(is_live, |r| {
             r.child(button(
-                if paused { "Reanudar" } else { "Pausar" },
+                if paused {
+                    tr!("shell-resume")
+                } else {
+                    tr!("shell-pause")
+                },
                 Kind::Secondary,
                 move |_| {
                     if let Some(view) = ws.write().active_mut() {
@@ -106,9 +133,9 @@ fn top_bar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             ))
             .child(button(
                 if recording {
-                    "Detener  Ctrl R"
+                    tr!("shell-stop-recording")
                 } else {
-                    "Grabar…"
+                    tr!("shell-record")
                 },
                 if recording {
                     Kind::Danger
@@ -119,7 +146,7 @@ fn top_bar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             ))
         })
         .maybe(!is_live, |r| {
-            r.child(button("Exportar…", Kind::Secondary, move |_| {
+            r.child(button(tr!("shell-export"), Kind::Secondary, move |_| {
                 ws.write().dialog = Some(Dialog::Export);
             }))
         })
@@ -138,7 +165,8 @@ fn tabs_row(mut ws: State<Workspace>, index: usize, view: &SessionView) -> Rect 
         .children(Tab::ALL.iter().map(|tab| {
             let tab = *tab;
             let on = tab == current;
-            let tab_w = super::draw::measure(tab.label(), 13., false) * 1.12 + 28.;
+            let tab_label = tr!(tab.label());
+            let tab_w = super::draw::measure(&tab_label, 13., false) * 1.12 + 28.;
             rect()
                 .width(Size::px(tab_w))
                 .cursor(CursorIcon::Pointer)
@@ -149,12 +177,8 @@ fn tabs_row(mut ws: State<Workspace>, index: usize, view: &SessionView) -> Rect 
                 })
                 .child(
                     rect().padding((10., 13., 8., 13.)).child(
-                        text(
-                            tab.label(),
-                            13.,
-                            if on { theme::TEXT } else { theme::TEXT2 },
-                        )
-                        .font_weight(if on { 600 } else { 400 }),
+                        text(tab_label, 13., if on { theme::TEXT } else { theme::TEXT2 })
+                            .font_weight(if on { 600 } else { 400 }),
                     ),
                 )
                 .child(
@@ -279,7 +303,7 @@ fn side_panel(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                             .content(Content::flex())
                             .width(Size::fill())
                             .child(caption("Crates").width(Size::flex(1.)))
-                            .child(text("% tiempo", 11., theme::TEXT3)),
+                            .child(text(tr!("shell-time-share"), 11., theme::TEXT3)),
                     )
                     .children(by_group.into_iter().filter(|(_, l)| !l.is_empty()).map(
                         |(group, list)| {
@@ -301,7 +325,7 @@ fn side_panel(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                     .child(rect().height(Size::px(10.)))
                     .child(hline())
                     .child(rect().height(Size::px(10.)))
-                    .child(caption("Hilos"))
+                    .child(caption(&tr!("shell-threads")))
                     .children(threads.into_iter().map(|(id, name, ns)| {
                         let off = hidden_threads.contains(&id);
                         #[allow(clippy::cast_precision_loss)]
@@ -333,34 +357,36 @@ fn side_panel(mut ws: State<Workspace>, view: &SessionView) -> Rect {
 
 fn status_bar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
     let session = &view.session;
-    let left = match view.live() {
-        Some(live) => format!(
-            "{:.0} eventos/s   ·   {} descartados   ·   recibido {}   ·   zudp {}   ·   rtt {}",
-            live.events_per_sec,
-            session.dropped,
-            Bytes(live.received_bytes),
-            live.addr,
-            live.rtt
+    let left = if let Some(live) = view.live() {
+        tr!(
+            "shell-status-live",
+            rate = format!("{:.0}", live.events_per_sec),
+            dropped = session.dropped.to_string(),
+            received = Bytes(live.received_bytes).to_string(),
+            addr = live.addr.to_string(),
+            rtt = live
+                .rtt
                 .map_or_else(|| "—".to_owned(), |r| format!("{} ms", r.as_millis())),
-        ),
-        None => format!(
-            "archivo · {} frames · {} eventos · {} logs · {} descartados · {} · {} · {}",
-            session.frames.len(),
-            session.events,
-            session.logs.len(),
-            session.dropped,
-            session.info.platform,
-            session.info.device,
-            if session.info.build.is_empty() {
+        )
+    } else {
+        tr!(
+            "shell-status-file",
+            frames = session.frames.len().to_string(),
+            events = session.events.to_string(),
+            logs = session.logs.len().to_string(),
+            dropped = session.dropped.to_string(),
+            platform = session.info.platform.clone(),
+            device = session.info.device.clone(),
+            version = if session.info.build.is_empty() {
                 session.info.app_version.clone()
             } else {
                 format!("{} ({})", session.info.app_version, session.info.build)
             },
-        ),
+        )
     };
     let filter = view
         .live()
-        .map(|l| format!("filtro en app: {}", l.app_filter));
+        .map(|l| tr!("shell-app-filter", filter = l.app_filter.clone()));
     rect()
         .width(Size::fill())
         .height(Size::px(24.))
@@ -384,19 +410,19 @@ fn waiting(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
     let live = view.live()?;
     let (title, body, retry) = match &live.status {
         LiveStatus::Connecting => (
-            "Conectando…".to_owned(),
-            format!("Esperando a {}", live.addr),
+            tr!("shell-waiting-connecting"),
+            tr!("shell-waiting-for", addr = live.addr.to_string()),
             false,
         ),
         LiveStatus::NeedsPairing { rejected } => (
-            "Falta el código de emparejamiento".to_owned(),
-            rejected.clone().unwrap_or_else(|| {
-                "La app muestra un código de 6 dígitos en su log (target sismo).".into()
-            }),
+            tr!("shell-waiting-pairing"),
+            rejected
+                .clone()
+                .unwrap_or_else(|| tr!("shell-waiting-pairing-body")),
             false,
         ),
         LiveStatus::Lost { reason, .. } if view.session.events == 0 => {
-            ("Sin conexión".to_owned(), reason.clone(), true)
+            (tr!("shell-waiting-lost"), reason.clone(), true)
         }
         _ => return None,
     };
@@ -408,7 +434,7 @@ fn waiting(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
             .child(text(title, 15., theme::TEXT).font_weight(600))
             .child(text(body, 12., theme::TEXT2))
             .maybe(retry, |r| {
-                r.child(button("Reintentar", Kind::Secondary, move |_| {
+                r.child(button(tr!("shell-retry"), Kind::Secondary, move |_| {
                     if let Some(v) = ws.write().active_mut() {
                         let _ = v.reconnect();
                     }
@@ -417,7 +443,7 @@ fn waiting(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
             .maybe(
                 matches!(live.status, LiveStatus::NeedsPairing { .. }),
                 |r| {
-                    r.child(button("Ingresar código…", Kind::Primary, move |_| {
+                    r.child(button(tr!("shell-enter-code"), Kind::Primary, move |_| {
                         ws.write().dialog = Some(Dialog::Pair {
                             code: String::new(),
                         });
@@ -442,22 +468,23 @@ fn banner(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
                 .background(theme::color(theme::WARN_DIM))
                 .child(
                     text(
-                        format!(
-                            "Se perdió la conexión ({reason}) · lo recibido hasta {} sigue aquí",
-                            Clock(end)
+                        tr!(
+                            "shell-lost-banner",
+                            reason = reason.as_str(),
+                            until = Clock(end).to_string(),
                         ),
                         12.,
                         theme::TEXT,
                     )
                     .width(Size::flex(1.)),
                 )
-                .child(button("Reintentar ahora", Kind::Secondary, move |_| {
+                .child(button(tr!("shell-retry-now"), Kind::Secondary, move |_| {
                     if let Some(v) = ws.write().active_mut() {
                         let _ = v.reconnect();
                     }
                 }))
                 .child(button(
-                    "Guardar lo recibido…",
+                    tr!("shell-save-received"),
                     Kind::Secondary,
                     move |_| dialogs::save_received(ws),
                 )),
@@ -468,11 +495,7 @@ fn banner(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
             .width(Size::fill())
             .padding((8., 16.))
             .background(theme::color(theme::BG2))
-            .child(text(
-                "Vista congelada · la app sigue mandando y el visor guarda en segundo plano · Espacio reanuda",
-                12.,
-                theme::TEXT2,
-            ))
+            .child(text(tr!("shell-paused-banner"), 12., theme::TEXT2))
     })
 }
 

@@ -10,6 +10,7 @@ use sismo_analysis::{FlameNode, Group, Session};
 
 use super::Workspace;
 use super::draw::Scene;
+use super::i18n::tr;
 use super::theme;
 use super::timeline::scene;
 use super::widgets::{Kind, button, caption, hline, mono, swatch, text, vline};
@@ -128,7 +129,7 @@ impl Icicle<'_> {
         }
         if start.children.is_empty() {
             p.text(
-                "Nada que mostrar en este rango con esta consulta",
+                &tr!("flame-empty"),
                 PAD,
                 top + 4.,
                 12.,
@@ -190,7 +191,7 @@ fn share_row(session: &Session, callsite: u32, label: Option<&str>, ns: u64, max
     let name = label.map_or_else(
         || {
             if callsite == 0 {
-                "(raíz)".to_owned()
+                tr!("flame-root")
             } else {
                 session.name(callsite).to_owned()
             }
@@ -253,17 +254,21 @@ fn side(mut ws: State<Workspace>, session: &Session, root: &FlameNode, callsite:
                 .child(mono(session.name(callsite), 13., theme::TEXT).font_weight(600)),
         )
         .child(mono(
-            format!("total {} · propio {}", Nanos(s.total), Nanos(s.own)),
+            tr!(
+                "flame-total-own",
+                total = Nanos(s.total).to_string(),
+                own = Nanos(s.own).to_string()
+            ),
             11.,
             theme::TEXT2,
         ))
-        .child(caption("Llamado por"))
+        .child(caption(&tr!("flame-called-by")))
         .children(
             s.callers
                 .iter()
                 .map(|(c, ns)| share_row(session, *c, None, *ns, max_callers)),
         )
-        .child(caption("Llama a"))
+        .child(caption(&tr!("flame-calls")))
         .children(
             s.callees
                 .iter()
@@ -272,15 +277,19 @@ fn side(mut ws: State<Workspace>, session: &Session, root: &FlameNode, callsite:
         .child(share_row(
             session,
             callsite,
-            Some("(propio)"),
+            Some(&tr!("flame-own")),
             s.own,
             max_callees,
         ))
-        .child(button("Ver en Funciones", Kind::Secondary, move |_| {
-            if let Some(v) = ws.write().active_mut() {
-                v.tab = Tab::Functions;
-            }
-        }))
+        .child(button(
+            tr!("common-show-in-functions"),
+            Kind::Secondary,
+            move |_| {
+                if let Some(v) = ws.write().active_mut() {
+                    v.tab = Tab::Functions;
+                }
+            },
+        ))
 }
 
 fn split_bar(split: sismo_analysis::GroupSplit) -> Rect {
@@ -288,7 +297,7 @@ fn split_bar(split: sismo_analysis::GroupSplit) -> Rect {
         .width(Size::fill())
         .padding((12., 16.))
         .spacing(8.)
-        .child(text("¿Dónde se va el tiempo?", 13., theme::TEXT).font_weight(600))
+        .child(text(tr!("flame-where-time-goes"), 13., theme::TEXT).font_weight(600))
         .child(
             rect()
                 .width(Size::fill())
@@ -348,9 +357,9 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
     let window_label = format!(
         "{} · {}",
         if view.selection.is_some() {
-            "selección"
+            tr!("flame-window-selection")
         } else {
-            "toda la sesión"
+            tr!("flame-window-session")
         },
         Nanos(window.1.saturating_sub(window.0))
     );
@@ -405,23 +414,20 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                 .cross_align(Alignment::Center)
                 .padding((10., 16.))
                 .spacing(16.)
-                .child(text("Icicle", 13., theme::TEXT).font_weight(600))
+                .child(text(tr!("flame-icicle"), 13., theme::TEXT).font_weight(600))
                 .child(
                     mono(
-                        format!(
-                            "agregado · {window_label} · {} hilos",
-                            session.threads.len()
+                        tr!(
+                            "flame-aggregate",
+                            window = window_label,
+                            threads = session.threads.len().to_string(),
                         ),
                         12.,
                         theme::TEXT2,
                     )
                     .width(Size::flex(1.)),
                 )
-                .child(text(
-                    "clic = enfocar · Esc = volver a la raíz",
-                    11.,
-                    theme::TEXT3,
-                )),
+                .child(text(tr!("flame-hint"), 11., theme::TEXT3)),
         )
         .child(hline())
         .child(

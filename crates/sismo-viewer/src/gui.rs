@@ -15,9 +15,11 @@ mod dialogs;
 mod draw;
 mod flame;
 mod functions;
+mod i18n;
 mod logs;
 mod metrics;
 mod platform;
+mod prefs;
 mod query_bar;
 mod sessions;
 mod shell;
@@ -32,7 +34,9 @@ use std::time::{Duration, Instant};
 use freya::prelude::*;
 
 use crate::client::{Discovered, Scanner};
-use crate::workspace::{Recent, Saved, SessionView, Tab};
+use crate::workspace::{Saved, SessionView, Tab};
+use i18n::tr;
+use prefs::Prefs;
 
 /// Recording to diff the opened file against.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +57,7 @@ pub enum Dialog {
 /// Transient notice in the bottom-right corner.
 #[derive(Debug, Clone)]
 pub struct Toast {
+    /// Fluent key, translated when rendered.
     pub title: String,
     pub body: String,
     pub path: Option<PathBuf>,
@@ -68,7 +73,7 @@ pub struct Workspace {
     pub discovered: Vec<Discovered>,
     pub scan_error: Option<String>,
     pub scan_started: Instant,
-    pub recent: Recent,
+    pub prefs: Prefs,
     pub dialog: Option<Dialog>,
     pub toast: Option<Toast>,
     next_id: u64,
@@ -85,7 +90,7 @@ impl Workspace {
             discovered: Vec::new(),
             scan_error,
             scan_started: Instant::now(),
-            recent: Recent::load(),
+            prefs: Prefs::load(),
             dialog: None,
             toast: None,
             next_id: 1,
@@ -133,11 +138,11 @@ impl Workspace {
         match SessionView::open_file(self.next_id, path) {
             Ok(view) => {
                 self.next_id += 1;
-                self.recent.push(path);
+                self.prefs.push_recent(path);
                 self.sessions.push(view);
                 self.active = Some(self.sessions.len() - 1);
             }
-            Err(error) => self.notify("No se pudo abrir", error.to_string(), None, true),
+            Err(error) => self.notify("toast-open-failed", error.to_string(), None, true),
         }
     }
 
@@ -156,7 +161,7 @@ impl Workspace {
                 self.sessions.push(view);
                 self.active = Some(self.sessions.len() - 1);
             }
-            Err(error) => self.notify("No se pudo conectar", error.to_string(), None, true),
+            Err(error) => self.notify("toast-connect-failed", error.to_string(), None, true),
         }
     }
 
@@ -229,14 +234,20 @@ impl Workspace {
 
     pub fn recording_saved(&mut self, saved: &Saved) {
         use sismo_analysis::units::{Bytes, Nanos};
-        let body = format!(
-            "{} · {} · {} marcadores",
-            Nanos(u64::try_from(saved.duration.as_nanos()).unwrap_or(u64::MAX)),
-            Bytes(saved.bytes),
-            saved.markers
+        let body = tr!(
+            "toast-recording-saved-body",
+            duration =
+                Nanos(u64::try_from(saved.duration.as_nanos()).unwrap_or(u64::MAX)).to_string(),
+            size = Bytes(saved.bytes).to_string(),
+            markers = saved.markers.to_string(),
         );
-        self.recent.push(&saved.path);
-        self.notify("Grabación guardada", body, Some(saved.path.clone()), false);
+        self.prefs.push_recent(&saved.path);
+        self.notify(
+            "toast-recording-saved",
+            body,
+            Some(saved.path.clone()),
+            false,
+        );
     }
 }
 
@@ -330,7 +341,7 @@ fn app() -> impl IntoElement {
                     view.tab = Tab::Functions;
                 }
                 Err(error) => {
-                    workspace.notify("No se pudo comparar", error.to_string(), None, true);
+                    workspace.notify("toast-compare-failed", error.to_string(), None, true);
                 }
             }
         }
@@ -339,6 +350,7 @@ fn app() -> impl IntoElement {
         }
         workspace
     });
+    freya::i18n::use_init_i18n(move || i18n::config(ws.peek().prefs.language()));
     use_hook(move || {
         spawn(async move {
             loop {
@@ -452,7 +464,7 @@ mod snapshots {
             }
             runner.sync_and_update();
             runner.sync_and_update();
-            let name = tab.map_or("sessions", Tab::label).to_lowercase();
+            let name = tab.map_or("sessions", |t| t.label().trim_start_matches("tab-"));
             runner.render_to_file(dir.join(format!("sismo-{name}.png")));
         }
     }
@@ -502,8 +514,10 @@ mod live_snapshot {
                 Platform::get().load_font(name, Bytes::from_static(bytes));
             }
             runner.poll(Duration::from_millis(100), Duration::from_secs(3));
-            runner
-                .render_to_file(dir.join(format!("sismo-live-{}.png", tab.label().to_lowercase())));
+            runner.render_to_file(dir.join(format!(
+                "sismo-live-{}.png",
+                tab.label().trim_start_matches("tab-")
+            )));
         }
     }
 }

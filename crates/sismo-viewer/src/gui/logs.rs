@@ -6,6 +6,7 @@ use sismo_analysis::{LogEntry, Query, Session};
 use sismo_format::{Level, Source};
 
 use super::Workspace;
+use super::i18n::tr;
 use super::theme;
 use super::timeline::focus_frame;
 use super::widgets::{Kind, badge, button, caption, chip, hline, mono, text};
@@ -154,21 +155,21 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, index: usize) -> Option<
                             .child(mono(log.message.clone(), 13., theme::TEXT)),
                     )
                     .child(mono(
-                        format!(
-                            "{}  ·  {}  ·  {}:{}  ·  hilo {}  ·  fuente {}",
-                            Clock(log.t),
-                            def.map_or("?", |d| d.target.as_str()),
-                            def.map_or("?", |d| d.file.as_str()),
-                            def.map_or(0, |d| d.line),
-                            session.thread_name(log.thread),
-                            log.source.as_str()
+                        tr!(
+                            "logs-detail-location",
+                            time = Clock(log.t).to_string(),
+                            target = def.map_or("?", |d| d.target.as_str()),
+                            file = def.map_or("?", |d| d.file.as_str()),
+                            line = def.map_or(0, |d| d.line).to_string(),
+                            thread = session.thread_name(log.thread).to_string(),
+                            source = log.source.as_str(),
                         ),
                         11.,
                         theme::TEXT3,
                     ))
-                    .child(caption("Campos"))
+                    .child(caption(&tr!("logs-fields")))
                     .maybe(log.fields.is_empty(), |r| {
-                        r.child(text("sin campos", 12., theme::TEXT3))
+                        r.child(text(tr!("logs-no-fields"), 12., theme::TEXT3))
                     })
                     .children(log.fields.iter().take(5).map(|(k, v)| {
                         rect()
@@ -183,10 +184,10 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, index: usize) -> Option<
                 rect()
                     .width(Size::px(420.))
                     .spacing(8.)
-                    .child(caption("Dentro de"))
+                    .child(caption(&tr!("logs-inside")))
                     .child(mono(
                         if chain.is_empty() {
-                            "fuera de cualquier span".to_owned()
+                            tr!("logs-outside-span")
                         } else {
                             chain.join(" › ")
                         },
@@ -204,16 +205,20 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, index: usize) -> Option<
                             theme::TEXT3,
                         )
                     }))
-                    .child(button("Ver en Timeline", Kind::Secondary, move |_| {
-                        if let Some(v) = ws.write().active_mut() {
-                            match frame {
-                                Some(f) => focus_frame(v, f.index),
-                                None => v.view = (t.saturating_sub(5_000_000), t + 5_000_000),
+                    .child(button(
+                        tr!("common-show-in-timeline"),
+                        Kind::Secondary,
+                        move |_| {
+                            if let Some(v) = ws.write().active_mut() {
+                                match frame {
+                                    Some(f) => focus_frame(v, f.index),
+                                    None => v.view = (t.saturating_sub(5_000_000), t + 5_000_000),
+                                }
+                                v.follow = false;
+                                v.tab = Tab::Timeline;
                             }
-                            v.follow = false;
-                            v.tab = Tab::Timeline;
-                        }
-                    })),
+                        },
+                    )),
             ),
     )
 }
@@ -273,7 +278,15 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
         .child(rect().width(Size::px(14.)))
         .children(source_chips)
         .child(rect().width(Size::flex(1.)))
-        .child(mono(format!("{count} de {total}"), 12., theme::TEXT3))
+        .child(mono(
+            tr!(
+                "common-count-of-total",
+                count = count.to_string(),
+                total = total.to_string(),
+            ),
+            12.,
+            theme::TEXT3,
+        ))
         .maybe(view.live().is_some(), |r| {
             r.child(
                 rect()
@@ -284,9 +297,9 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                         }
                     })
                     .child(if follow {
-                        badge("Siguiendo  End", theme::TEXT, theme::BG3)
+                        badge(tr!("logs-following"), theme::TEXT, theme::BG3)
                     } else {
-                        badge("Pausado el seguimiento", theme::TEXT3, theme::BG2)
+                        badge(tr!("logs-follow-paused"), theme::TEXT3, theme::BG2)
                     }),
             )
         });

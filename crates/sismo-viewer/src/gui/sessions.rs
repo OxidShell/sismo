@@ -6,6 +6,7 @@ use freya::prelude::*;
 use sismo_format::FORMAT_VERSION;
 use sismo_format::net::AuthMode;
 
+use super::i18n::tr;
 use super::theme::{self, Rgb};
 use super::widgets::{Kind, badge, bordered, button, caption, kbd, mono, text};
 use super::{Workspace, dialogs};
@@ -28,51 +29,57 @@ fn top_bar(ws: State<Workspace>) -> Rect {
                 .alignment(BorderAlignment::Inner),
         )
         .child(text("sismo", 14., theme::TEXT).font_weight(600))
-        .child(text("Sesiones", 13., theme::TEXT).font_weight(500))
+        .child(text(tr!("sessions-title"), 13., theme::TEXT).font_weight(500))
         .child(rect().width(Size::flex(1.)))
         .child(kbd("Ctrl O"))
-        .child(button("Abrir archivo…", Kind::Primary, move |_| {
-            dialogs::pick_file(ws);
-        }))
+        .child(button(
+            tr!("sessions-open-file"),
+            Kind::Primary,
+            move |_| {
+                dialogs::pick_file(ws);
+            },
+        ))
 }
 
 fn age(app: &Discovered) -> String {
     let secs = app.seen.elapsed().as_secs();
     if secs < 5 {
-        "ahora".into()
+        tr!("sessions-seen-now")
     } else {
-        format!("visto hace {secs} s")
+        tr!("sessions-seen-ago", secs = secs.to_string())
     }
 }
 
 fn app_card(mut ws: State<Workspace>, app: &Discovered, connected: bool) -> Rect {
     let b = &app.beacon;
     let compatible = b.format_version == FORMAT_VERSION;
-    let (state, fg, bg): (&str, Rgb, Rgb) = if !compatible {
-        ("INCOMPATIBLE", theme::TEXT3, theme::BG3)
+    let (state, fg, bg): (String, Rgb, Rgb) = if !compatible {
+        (tr!("sessions-state-incompatible"), theme::TEXT3, theme::BG3)
     } else if connected {
-        ("CONECTADA", theme::TEXT, theme::BG3)
+        (tr!("sessions-state-connected"), theme::TEXT, theme::BG3)
     } else if b.auth == AuthMode::Pairing {
-        ("PIDE CÓDIGO", theme::WARN, theme::WARN_DIM)
+        (tr!("common-state-needs-code"), theme::WARN, theme::WARN_DIM)
     } else {
-        ("DISPONIBLE", theme::TEXT2, theme::BG3)
+        (tr!("sessions-state-available"), theme::TEXT2, theme::BG3)
     };
     let addr = app.addr;
     let action = if !compatible {
-        "Detalles"
+        tr!("sessions-action-details")
     } else if connected {
-        "Abrir"
+        tr!("common-open")
     } else if b.auth == AuthMode::Pairing {
-        "Emparejar…"
+        tr!("sessions-action-pair")
     } else {
-        "Conectar"
+        tr!("sessions-action-connect")
     };
     let detail = if compatible {
         format!("{} · {} · {}", b.device, b.platform, age(app))
     } else {
-        format!(
-            "{} · usa formato sismo v{}, este visor lee v{FORMAT_VERSION}",
-            b.platform, b.format_version
+        tr!(
+            "sessions-incompatible-detail",
+            platform = b.platform.clone(),
+            theirs = b.format_version.to_string(),
+            ours = FORMAT_VERSION.to_string(),
         )
     };
     let name_color = if compatible {
@@ -140,8 +147,8 @@ fn app_card(mut ws: State<Workspace>, app: &Discovered, connected: bool) -> Rect
                     ws.write().connect(addr);
                 } else {
                     ws.write().notify(
-                        "Formato incompatible",
-                        "Actualiza el visor o usa la misma versión de sismo en la app.",
+                        "toast-incompatible-format",
+                        tr!("toast-incompatible-format-body"),
                         None,
                         true,
                     );
@@ -153,25 +160,17 @@ fn app_card(mut ws: State<Workspace>, app: &Discovered, connected: bool) -> Rect
 fn empty_state(ws: &Workspace) -> Rect {
     let waiting = ws.scan_started.elapsed() < Duration::from_secs(4);
     let steps = [
-        (
-            "1",
-            "La app tiene sismo en modo Live",
-            "SISMO=live o Config::live(..); en release viene apagado.",
-        ),
-        (
-            "2",
-            "Mismo Wi-Fi que esta PC",
-            "Redes de invitados y algunos routers bloquean broadcast entre equipos.",
-        ),
+        ("1", "sessions-step-live-title", "sessions-step-live-body"),
+        ("2", "sessions-step-wifi-title", "sessions-step-wifi-body"),
         (
             "3",
-            "El firewall deja pasar UDP 7701",
-            "Es el puerto de descubrimiento; los datos usan 7720.",
+            "sessions-step-firewall-title",
+            "sessions-step-firewall-body",
         ),
         (
             "4",
-            "Android: permiso INTERNET en el manifest",
-            "Sin él la app no puede anunciarse.",
+            "sessions-step-android-title",
+            "sessions-step-android-body",
         ),
     ];
     rect()
@@ -181,31 +180,40 @@ fn empty_state(ws: &Workspace) -> Rect {
         .corner_radius(6.)
         .background(theme::color(theme::BG1))
         .border(bordered(theme::LINE))
-        .child(text(
-            if waiting { "Buscando apps…" } else { "Ninguna app con sismo en esta red" },
-            15.,
-            theme::TEXT,
-        ).font_weight(600))
-        .maybe_child(ws.scan_error.as_ref().map(|e| text(format!("El escaneo falló: {e}"), 12., theme::ERROR)))
+        .child(
+            text(
+                if waiting {
+                    tr!("sessions-searching")
+                } else {
+                    tr!("sessions-none-found")
+                },
+                15.,
+                theme::TEXT,
+            )
+            .font_weight(600),
+        )
+        .maybe_child(ws.scan_error.as_ref().map(|e| {
+            text(
+                tr!("sessions-scan-failed", error = e.as_str()),
+                12.,
+                theme::ERROR,
+            )
+        }))
         .children(steps.iter().map(|(n, title, body)| {
             rect()
                 .horizontal()
-        .content(Content::flex())
+                .content(Content::flex())
                 .spacing(12.)
                 .child(mono(*n, 13., theme::TEXT3).font_weight(600))
                 .child(
                     rect()
                         .spacing(4.)
-                        .child(text(*title, 13., theme::TEXT).font_weight(500))
-                        .child(text(*body, 12., theme::TEXT3)),
+                        .child(text(tr!(title), 13., theme::TEXT).font_weight(500))
+                        .child(text(tr!(body), 12., theme::TEXT3)),
                 )
                 .into_element()
         }))
-        .child(text(
-            "¿Sin red con el cliente? Pídele «Exportar diagnóstico» y abre el archivo a la derecha.",
-            12.,
-            theme::TEXT2,
-        ))
+        .child(text(tr!("sessions-no-network-hint"), 12., theme::TEXT2))
 }
 
 pub fn sessions_screen(mut ws: State<Workspace>) -> Rect {
@@ -235,7 +243,7 @@ pub fn sessions_screen(mut ws: State<Workspace>) -> Rect {
         .enumerate()
         .map(|(i, s)| (i, s.title()))
         .collect();
-    let recent = w.recent.files.clone();
+    let recent = w.prefs.recent_files();
     drop(w);
 
     let left = rect()
@@ -246,18 +254,18 @@ pub fn sessions_screen(mut ws: State<Workspace>) -> Rect {
         .child(
             rect()
                 .horizontal()
-        .content(Content::flex())
+                .content(Content::flex())
                 .spacing(14.)
                 .cross_align(Alignment::Center)
-                .child(text("En vivo en la red", 15., theme::TEXT).font_weight(600))
-                .child(mono(format!("broadcast zudp :7701 · {} apps", apps.len()), 12., theme::TEXT3)),
+                .child(text(tr!("sessions-live-title"), 15., theme::TEXT).font_weight(600))
+                .child(mono(
+                    tr!("sessions-live-broadcast", count = apps.len().to_string()),
+                    12.,
+                    theme::TEXT3,
+                )),
         )
         .child(ScrollView::new().height(Size::flex(1.)).child(live_list))
-        .child(text(
-            "Las apps aparecen solas cuando activan sismo en modo Live · Enter abre la seleccionada",
-            11.,
-            theme::TEXT3,
-        ));
+        .child(text(tr!("sessions-live-footer"), 11., theme::TEXT3));
 
     let right = rect()
         .width(Size::px(500.))
@@ -265,8 +273,8 @@ pub fn sessions_screen(mut ws: State<Workspace>) -> Rect {
         .content(Content::flex())
         .spacing(14.)
         .maybe(!open_sessions.is_empty(), |r| {
-            r.child(caption("Sesiones abiertas"))
-                .children(open_sessions.into_iter().map(|(i, title)| {
+            r.child(caption(&tr!("sessions-open-sessions"))).children(
+                open_sessions.into_iter().map(|(i, title)| {
                     rect()
                         .width(Size::fill())
                         .padding((9., 12.))
@@ -276,9 +284,10 @@ pub fn sessions_screen(mut ws: State<Workspace>) -> Rect {
                         .on_press(move |_| ws.write().active = Some(i))
                         .child(mono(title, 12., theme::TEXT))
                         .into_element()
-                }))
+                }),
+            )
         })
-        .child(text("Archivos", 15., theme::TEXT).font_weight(600))
+        .child(text(tr!("sessions-files"), 15., theme::TEXT).font_weight(600))
         .child(
             rect()
                 .width(Size::fill())
@@ -290,14 +299,12 @@ pub fn sessions_screen(mut ws: State<Workspace>) -> Rect {
                 .border(bordered(theme::LINE2))
                 .cursor(CursorIcon::Pointer)
                 .on_press(move |_| dialogs::pick_file(ws))
-                .child(text("Suelta un .sismo aquí", 13., theme::TEXT).font_weight(500))
-                .child(text(
-                    "o Ctrl O para elegirlo · también los que exporta un cliente",
-                    12.,
-                    theme::TEXT3,
-                )),
+                .child(text(tr!("sessions-drop-title"), 13., theme::TEXT).font_weight(500))
+                .child(text(tr!("sessions-drop-body"), 12., theme::TEXT3)),
         )
-        .maybe(!recent.is_empty(), |r| r.child(caption("Recientes")))
+        .maybe(!recent.is_empty(), |r| {
+            r.child(caption(&tr!("sessions-recent")))
+        })
         .child(
             ScrollView::new().height(Size::flex(1.)).child(
                 rect()
@@ -310,9 +317,9 @@ pub fn sessions_screen(mut ws: State<Workspace>) -> Rect {
                             .unwrap_or_default();
                         let meta = std::fs::metadata(&path).map_or(0, |m| m.len());
                         let tag = if name.contains("panic") {
-                            ("caja negra", theme::ERROR)
+                            (tr!("sessions-tag-black-box"), theme::ERROR)
                         } else {
-                            ("grabado", theme::TEXT2)
+                            (tr!("sessions-tag-recorded"), theme::TEXT2)
                         };
                         let dir = path
                             .parent()
@@ -351,19 +358,25 @@ pub fn sessions_screen(mut ws: State<Workspace>) -> Rect {
                 .spacing(8.)
                 .corner_radius(6.)
                 .border(bordered(theme::LINE))
-                .child(text("Sin interfaz", 13., theme::TEXT).font_weight(600))
+                .child(text(tr!("sessions-headless"), 13., theme::TEXT).font_weight(600))
                 .child(mono(
-                    "sismo summary archivo.sismo --json",
+                    format!("sismo summary {}.sismo --json", tr!("sessions-cli-file")),
                     11.,
                     theme::TEXT2,
                 ))
                 .child(mono(
-                    "sismo logs archivo.sismo -q level:warn+",
+                    format!(
+                        "sismo logs {}.sismo -q level:warn+",
+                        tr!("sessions-cli-file")
+                    ),
                     11.,
                     theme::TEXT2,
                 ))
                 .child(mono(
-                    "sismo export archivo.sismo -f perfetto",
+                    format!(
+                        "sismo export {}.sismo -f perfetto",
+                        tr!("sessions-cli-file")
+                    ),
                     11.,
                     theme::TEXT2,
                 )),

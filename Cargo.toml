@@ -32,10 +32,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }
 flume = { version = "0.11", features = ["async"] }
-freya = { version = "=0.5.0-rc.13" }
+freya = { version = "=0.5.0-rc.13", features = ["i18n"] }
 freya-winit = "=0.5.0-rc.13"
 freya-core = "=0.5.0-rc.13"
 freya-engine = "=0.5.0-rc.13"
+freya-i18n = "=0.5.0-rc.13"
 istmo = "0.1.1-alpha.4"
 istmo-file-picker = "0.1.1-alpha.4"
 istmo-opener = "0.1.1-alpha.4"

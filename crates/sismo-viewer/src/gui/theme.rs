@@ -4,6 +4,8 @@ use freya::prelude::Color;
 use sismo_analysis::Group;
 use sismo_format::Level;
 
+use super::i18n::tr;
+
 pub type Rgb = (u8, u8, u8);
 
 pub const BG0: Rgb = (0x16, 0x16, 0x15);
@@ -50,11 +52,11 @@ pub const fn group(group: Group) -> Rgb {
 }
 
 #[must_use]
-pub const fn group_label(group: Group) -> &'static str {
+pub fn group_label(group: Group) -> String {
     match group {
-        Group::App => "App",
-        Group::Framework => "Framework",
-        Group::Other => "Otros",
+        Group::App => tr!("group-app"),
+        Group::Framework => tr!("group-framework"),
+        Group::Other => tr!("group-other"),
     }
 }
 

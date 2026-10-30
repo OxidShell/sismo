@@ -5,6 +5,7 @@ use sismo_analysis::Session;
 use sismo_analysis::units::Nanos;
 
 use super::draw::Scene;
+use super::i18n::tr;
 use super::theme::{self, Rgb};
 use super::timeline::scene;
 use super::widgets::{bordered, mono, text};
@@ -103,12 +104,12 @@ fn frame_card(session: &Session, from: u64, to: u64) -> Element {
         chart(p, &[(cols, theme::FRAMEWORK)], Some(16.6), w, h);
     });
     card(
-        "Frame time".into(),
-        format!(
-            "p95 {} · máx {} · {} lentos",
-            Nanos(summary.p95_ns),
-            Nanos(summary.max_ns),
-            summary.slow
+        tr!("metrics-frame-time"),
+        tr!(
+            "metrics-frame-summary",
+            p95 = Nanos(summary.p95_ns).to_string(),
+            max = Nanos(summary.max_ns).to_string(),
+            slow = summary.slow.to_string(),
         ),
         paint,
     )
@@ -143,12 +144,17 @@ pub fn view(view: &SessionView) -> Rect {
             let paint = scene(CHART_W, CHART_H, move |p, w, h| {
                 chart(p, &[(cols, rgb)], None, w, h);
             });
-            let range = if lo <= hi {
-                format!(" · rango {lo:.0}–{hi:.0}")
+            let value = if lo <= hi {
+                tr!(
+                    "metrics-now-range",
+                    now = format!("{last:.0}"),
+                    lo = format!("{lo:.0}"),
+                    hi = format!("{hi:.0}"),
+                )
             } else {
-                String::new()
+                tr!("metrics-now", now = format!("{last:.0}"))
             };
-            card(name, format!("ahora {last:.0}{range}"), paint)
+            card(name, value, paint)
         },
     ));
 
@@ -184,7 +190,7 @@ pub fn view(view: &SessionView) -> Rect {
                 .children(rows)
                 .maybe(session.counters.is_empty(), |r| {
                     r.child(rect().padding(16.).child(text(
-                        "La app no registró contadores · usa sismo::counter!(\"nombre\", valor)",
+                        tr!("metrics-no-counters"),
                         12.,
                         theme::TEXT3,
                     )))

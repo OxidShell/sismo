@@ -9,6 +9,7 @@ use freya::prelude::*;
 use sismo_analysis::units::Bytes;
 use sismo_analysis::{ExportOptions, Format};
 
+use super::i18n::tr;
 use super::theme;
 use super::widgets::{Kind, bordered, button, caption, hline, kbd, mono, panel, scrim, text};
 use super::{Dialog, Toast, Workspace};
@@ -18,8 +19,7 @@ use crate::workspace::{LiveStatus, RecordFrom, StopRule, Tab, recordings_dir};
 /// Opens the native picker and loads the chosen recording.
 pub fn pick_file(mut ws: State<Workspace>) {
     spawn_in_window(async move {
-        if let Some(path) = super::platform::pick_recording("Abrir grabación de sismo".into()).await
-        {
+        if let Some(path) = super::platform::pick_recording(tr!("dialog-pick-recording")).await {
             ws.write().open_file(&path);
         }
     });
@@ -49,15 +49,15 @@ pub fn save_received(mut ws: State<Workspace>) {
             |v| format!("{}-recibido.sismo", v.session.info.app),
         );
         let Some(path) =
-            super::platform::save_path("Guardar lo recibido".into(), name, "sismo").await
+            super::platform::save_path(tr!("dialog-save-received"), name, "sismo").await
         else {
             return;
         };
         let result = ws.peek().active().map(|v| v.save_received(&path));
         let mut w = ws.write();
         match result {
-            Some(Ok(bytes)) => w.notify("Guardado", Bytes(bytes).to_string(), Some(path), false),
-            Some(Err(error)) => w.notify("No se pudo guardar", error.to_string(), None, true),
+            Some(Ok(bytes)) => w.notify("toast-saved", Bytes(bytes).to_string(), Some(path), false),
+            Some(Err(error)) => w.notify("toast-save-failed", error.to_string(), None, true),
             None => {}
         }
     });
@@ -106,7 +106,7 @@ fn option_row(
         .into_element()
 }
 
-fn field(value: State<String>, placeholder: &'static str, width: f32) -> Rect {
+fn field(value: State<String>, placeholder: String, width: f32) -> Rect {
     rect()
         .width(Size::px(width))
         .height(Size::px(32.))
@@ -174,8 +174,8 @@ impl Component for PairDialog {
         panel(420.)
             .padding(24.)
             .spacing(14.)
-            .child(title_row(&format!("Emparejar con {app}")))
-            .child(text("Escribe el código de 6 dígitos que la app muestra en su log (target sismo) o en su pantalla de diagnóstico.", 12., theme::TEXT2).max_lines(3))
+            .child(title_row(&tr!("dialog-pair-title", app = app)))
+            .child(text(tr!("dialog-pair-body"), 12., theme::TEXT2).max_lines(3))
             .child(
                 rect()
                     .width(Size::fill())
@@ -186,13 +186,20 @@ impl Component for PairDialog {
                     .center()
                     .font_family(theme::MONO)
                     .font_size(22.)
-                    .child(Input::new(code).flat().auto_focus(true).width(Size::px(360.)).placeholder("000000").on_submit(move |_| submit())),
+                    .child(
+                        Input::new(code)
+                            .flat()
+                            .auto_focus(true)
+                            .width(Size::px(360.))
+                            .placeholder("000000")
+                            .on_submit(move |_| submit()),
+                    ),
             )
             .maybe_child(rejected.map(|r| text(r, 12., theme::ERROR)))
-            .child(text("Se recuerda este visor: la próxima vez conecta sin código.", 11., theme::TEXT3))
+            .child(text(tr!("dialog-pair-remembered"), 11., theme::TEXT3))
             .child(footer(vec![
-                button("Cancelar", Kind::Secondary, move |_| close(ws)).into_element(),
-                button("Emparejar", Kind::Primary, move |_| submit()).into_element(),
+                button(tr!("common-cancel"), Kind::Secondary, move |_| close(ws)).into_element(),
+                button(tr!("dialog-pair-submit"), Kind::Primary, move |_| submit()).into_element(),
             ]))
     }
 }
@@ -227,10 +234,10 @@ impl Component for RecordDialog {
             .and_then(|v| v.live())
             .map_or(0, |l| l.received_bytes);
         let stops = [
-            ("A mano", StopRule::Manual),
-            ("5 min", StopRule::After(Duration::from_mins(5))),
-            ("500 MB", StopRule::Size(500 * 1024 * 1024)),
-            ("Al primer error", StopRule::FirstError),
+            ("dialog-stop-manual", StopRule::Manual),
+            ("dialog-stop-5min", StopRule::After(Duration::from_mins(5))),
+            ("dialog-stop-500mb", StopRule::Size(500 * 1024 * 1024)),
+            ("dialog-stop-first-error", StopRule::FirstError),
         ];
         let current_stop = *stop.read();
         let start = move |_| {
@@ -242,48 +249,68 @@ impl Component for RecordDialog {
                 .map(|v| v.start_recording(target.clone(), *from.peek(), rule, *on_device.peek()));
             w.dialog = None;
             if let Some(Err(error)) = result {
-                w.notify("No se pudo grabar", error.to_string(), None, true);
+                w.notify("toast-record-failed", error.to_string(), None, true);
             }
         };
         panel(560.)
             .padding(24.)
             .spacing(12.)
-            .child(title_row("Grabar sesión"))
-            .child(text("Guarda en esta PC lo que llega de la app, en el formato que abren el visor y el CLI.", 12., theme::TEXT2))
-            .child(caption("Desde"))
+            .child(title_row(&tr!("dialog-record-title")))
+            .child(text(tr!("dialog-record-body"), 12., theme::TEXT2))
+            .child(caption(&tr!("dialog-record-from")))
             .child(option_row(
-                "Incluir lo ya recibido",
-                &format!("{} desde que te conectaste, con el buffer de la app · sirve para grabar algo que ya pasó", Bytes(buffered)),
+                &tr!("dialog-record-include-buffer"),
+                &tr!(
+                    "dialog-record-include-buffer-sub",
+                    size = Bytes(buffered).to_string()
+                ),
                 *from.read() == RecordFrom::Buffer,
                 move |_| from.set(RecordFrom::Buffer),
             ))
-            .child(option_row("Solo desde ahora", "", *from.read() == RecordFrom::Now, move |_| from.set(RecordFrom::Now)))
-            .child(caption("Parar"))
-            .child(rect().horizontal().spacing(6.).children(stops.iter().enumerate().map(|(i, (label, _))| {
-                let on = i == current_stop;
-                rect()
-                    .padding((5., 12.))
-                    .corner_radius(4.)
-                    .background(theme::color(if on { theme::BG3 } else { theme::BG0 }))
-                    .border(bordered(theme::LINE2))
-                    .cursor(CursorIcon::Pointer)
-                    .on_press(move |_| stop.set(i))
-                    .child(text(*label, 12., if on { theme::TEXT } else { theme::TEXT2 }).font_weight(if on { 600 } else { 400 }))
-                    .into_element()
-            })))
-            .child(text("«Al primer error» sigue 10 s más para capturar lo que vino después.", 11., theme::TEXT3))
-            .child(caption("Archivo"))
-            .child(field(path, "ruta del archivo", 512.))
             .child(option_row(
-                "Grabar también en el dispositivo",
-                "La app escribe su propia copia y la manda al terminar; aguanta cortes de Wi-Fi.",
+                &tr!("dialog-record-from-now"),
+                "",
+                *from.read() == RecordFrom::Now,
+                move |_| from.set(RecordFrom::Now),
+            ))
+            .child(caption(&tr!("dialog-record-stop")))
+            .child(
+                rect()
+                    .horizontal()
+                    .spacing(6.)
+                    .children(stops.iter().enumerate().map(|(i, (label, _))| {
+                        let on = i == current_stop;
+                        rect()
+                            .padding((5., 12.))
+                            .corner_radius(4.)
+                            .background(theme::color(if on { theme::BG3 } else { theme::BG0 }))
+                            .border(bordered(theme::LINE2))
+                            .cursor(CursorIcon::Pointer)
+                            .on_press(move |_| stop.set(i))
+                            .child(
+                                text(tr!(label), 12., if on { theme::TEXT } else { theme::TEXT2 })
+                                    .font_weight(if on { 600 } else { 400 }),
+                            )
+                            .into_element()
+                    })),
+            )
+            .child(text(
+                tr!("dialog-record-first-error-hint"),
+                11.,
+                theme::TEXT3,
+            ))
+            .child(caption(&tr!("dialog-file")))
+            .child(field(path, tr!("dialog-file-path"), 512.))
+            .child(option_row(
+                &tr!("dialog-record-on-device"),
+                &tr!("dialog-record-on-device-sub"),
                 *on_device.read(),
                 move |_| on_device.toggle(),
             ))
             .child(hline())
             .child(footer(vec![
-                button("Cancelar", Kind::Secondary, move |_| close(ws)).into_element(),
-                button("Empezar a grabar  Ctrl R", Kind::Primary, start).into_element(),
+                button(tr!("common-cancel"), Kind::Secondary, move |_| close(ws)).into_element(),
+                button(tr!("dialog-record-start"), Kind::Primary, start).into_element(),
             ]))
     }
 }
@@ -291,28 +318,28 @@ impl Component for RecordDialog {
 const FORMATS: [(Format, &str, &str); 5] = [
     (
         Format::Perfetto,
-        "Perfetto  .pftrace",
-        "Timeline completo en ui.perfetto.dev o SQL con trace_processor",
+        "dialog-format-perfetto",
+        "dialog-format-perfetto-sub",
     ),
     (
         Format::SummaryJson,
-        "Resumen JSON  .json",
-        "Para agentes y scripts: top funciones, frames lentos, errores",
+        "dialog-format-summary",
+        "dialog-format-summary-sub",
     ),
     (
         Format::Markdown,
-        "Reporte Markdown  .md",
-        "Legible para un issue o un PR",
+        "dialog-format-markdown",
+        "dialog-format-markdown-sub",
     ),
     (
         Format::Chrome,
-        "Chrome trace  .json",
-        "chrome://tracing y herramientas viejas",
+        "dialog-format-chrome",
+        "dialog-format-chrome-sub",
     ),
     (
         Format::Sismo,
-        ".sismo recortado",
-        "Solo el rango elegido, para mandarlo a otra persona",
+        "dialog-format-sismo",
+        "dialog-format-sismo-sub",
     ),
 ];
 
@@ -377,55 +404,65 @@ impl Component for ExportDialog {
             match result {
                 Ok(()) => {
                     let size = std::fs::metadata(&target).map_or(0, |m| m.len());
-                    w.notify("Exportado", Bytes(size).to_string(), Some(target), false);
+                    w.notify(
+                        "toast-exported",
+                        Bytes(size).to_string(),
+                        Some(target),
+                        false,
+                    );
                 }
-                Err(error) => w.notify("No se pudo exportar", error.to_string(), None, true),
+                Err(error) => w.notify("toast-export-failed", error.to_string(), None, true),
             }
         };
         panel(620.)
             .padding(24.)
             .spacing(10.)
-            .child(title_row("Exportar"))
-            .child(caption("Formato"))
+            .child(title_row(&tr!("common-export")))
+            .child(caption(&tr!("dialog-export-format")))
             .children(FORMATS.iter().enumerate().map(|(i, (_, label, sub))| {
-                option_row(label, sub, i == current, move |_| format.set(i))
+                option_row(&tr!(label), &tr!(sub), i == current, move |_| format.set(i))
             }))
-            .child(caption("Alcance"))
+            .child(caption(&tr!("dialog-export-scope")))
             .child(option_row(
-                "Toda la sesión",
+                &tr!("dialog-export-scope-session"),
                 "",
                 *scope.read() == 0,
                 move |_| scope.set(0),
             ))
             .maybe(has_selection, |r| {
                 r.child(option_row(
-                    "Selección del Timeline",
+                    &tr!("dialog-export-scope-selection"),
                     "",
                     *scope.read() == 1,
                     move |_| scope.set(1),
                 ))
             })
             .child(option_row(
-                "Lo que pasa la consulta actual",
+                &tr!("dialog-export-scope-query"),
                 "",
                 *scope.read() == 2,
                 move |_| scope.set(2),
             ))
-            .child(option_row("Incluir logs", "", *logs.read(), move |_| {
-                logs.toggle();
-            }))
             .child(option_row(
-                "Quitar campos de los logs",
-                "Útil si pueden tener datos de usuarios",
+                &tr!("dialog-export-include-logs"),
+                "",
+                *logs.read(),
+                move |_| {
+                    logs.toggle();
+                },
+            ))
+            .child(option_row(
+                &tr!("dialog-export-strip-fields"),
+                &tr!("dialog-export-strip-fields-sub"),
                 *strip.read(),
                 move |_| strip.toggle(),
             ))
-            .child(caption("Archivo"))
-            .child(field(path, "ruta del archivo", 572.))
+            .child(caption(&tr!("dialog-file")))
+            .child(field(path, tr!("dialog-file-path"), 572.))
             .child(hline())
             .child(footer(vec![
-                button("Cancelar", Kind::Secondary, move |_| close(ws)).into_element(),
-                button("Exportar", Kind::Primary, run).into_element(),
+                button(tr!("common-cancel"), Kind::Secondary, move |_| close(ws)).into_element(),
+                button(tr!("common-export"), Kind::Primary, run).into_element(),
             ]))
     }
 }
@@ -448,7 +485,7 @@ impl Component for FilterDialog {
         let preview: Vec<(String, String)> = parsed
             .map(|f| {
                 std::iter::once((
-                    "(por defecto)".to_owned(),
+                    tr!("dialog-filter-default"),
                     f.default_level().as_str().to_owned(),
                 ))
                 .chain(
@@ -462,15 +499,11 @@ impl Component for FilterDialog {
         panel(520.)
             .padding(24.)
             .spacing(12.)
-            .child(title_row("Qué manda la app"))
-            .child(text(
-                "Se aplica en el dispositivo: bajar el nivel baja el costo, no solo lo que ves.",
-                12.,
-                theme::TEXT2,
-            ))
-            .child(field(value, "info,mi_app=trace,zudp=warn", 472.))
+            .child(title_row(&tr!("dialog-filter-title")))
+            .child(text(tr!("dialog-filter-body"), 12., theme::TEXT2))
+            .child(field(value, tr!("dialog-filter-placeholder"), 472.))
             .maybe_child(error.map(|e| text(e, 11., theme::ERROR)))
-            .child(caption("Niveles por target"))
+            .child(caption(&tr!("dialog-filter-levels")))
             .children(preview.into_iter().map(|(t, l)| {
                 rect()
                     .horizontal()
@@ -481,8 +514,8 @@ impl Component for FilterDialog {
             }))
             .child(hline())
             .child(footer(vec![
-                button("Cancelar", Kind::Secondary, move |_| close(ws)).into_element(),
-                button("Aplicar en la app", Kind::Primary, move |_| {
+                button(tr!("common-cancel"), Kind::Secondary, move |_| close(ws)).into_element(),
+                button(tr!("dialog-filter-apply"), Kind::Primary, move |_| {
                     if !ok {
                         return;
                     }
@@ -518,7 +551,7 @@ impl Component for MarkerDialog {
         panel(380.)
             .padding(20.)
             .spacing(12.)
-            .child(title_row("Marcador"))
+            .child(title_row(&tr!("dialog-marker-title")))
             .child(
                 rect()
                     .width(Size::fill())
@@ -527,27 +560,36 @@ impl Component for MarkerDialog {
                     .background(theme::color(theme::BG0))
                     .border(bordered(theme::TEXT2))
                     .center()
-                    .child(Input::new(note).flat().auto_focus(true).width(Size::px(330.)).placeholder("qué estás haciendo").on_submit(move |_| save())),
+                    .child(
+                        Input::new(note)
+                            .flat()
+                            .auto_focus(true)
+                            .width(Size::px(330.))
+                            .placeholder(tr!("dialog-marker-placeholder"))
+                            .on_submit(move |_| save()),
+                    ),
             )
-            .child(text("Queda en la app y en la grabación; aparece en Timeline, Logs y en el resumen del CLI.", 11., theme::TEXT3))
-            .child(footer(vec![button("Guardar  Enter", Kind::Primary, move |_| save()).into_element()]))
+            .child(text(tr!("dialog-marker-body"), 11., theme::TEXT3))
+            .child(footer(vec![
+                button(tr!("dialog-marker-save"), Kind::Primary, move |_| save()).into_element(),
+            ]))
     }
 }
 
 /// Command palette entries: label, shortcut, action id.
 const ACTIONS: [(&str, &str, u8); 12] = [
-    ("Comparar con…", "Ctrl D", 11),
-    ("Abrir archivo…", "Ctrl O", 0),
-    ("Grabar / detener", "Ctrl R", 1),
-    ("Exportar…", "Ctrl E", 2),
-    ("Ir a Timeline", "Ctrl 1", 3),
-    ("Ir a Flamegraph", "Ctrl 2", 4),
-    ("Ir a Funciones", "Ctrl 3", 5),
-    ("Ir a Logs", "Ctrl 4", 6),
-    ("Ir a Métricas", "Ctrl 5", 7),
-    ("Qué manda la app…", "", 8),
-    ("Volver a Sesiones", "", 9),
-    ("Atajos de teclado", "?", 10),
+    ("palette-compare", "Ctrl D", 11),
+    ("sessions-open-file", "Ctrl O", 0),
+    ("palette-record-toggle", "Ctrl R", 1),
+    ("shell-export", "Ctrl E", 2),
+    ("palette-go-timeline", "Ctrl 1", 3),
+    ("palette-go-flamegraph", "Ctrl 2", 4),
+    ("palette-go-functions", "Ctrl 3", 5),
+    ("palette-go-logs", "Ctrl 4", 6),
+    ("palette-go-metrics", "Ctrl 5", 7),
+    ("palette-app-filter", "", 8),
+    ("palette-back-to-sessions", "", 9),
+    ("palette-shortcuts", "?", 10),
 ];
 
 fn run_action(mut ws: State<Workspace>, id: u8) {
@@ -576,9 +618,9 @@ impl Component for PaletteDialog {
         let mut ws = self.0;
         let query = use_state(String::new);
         let needle = query.read().to_lowercase();
-        let actions: Vec<(&str, &str, u8)> = ACTIONS
+        let actions: Vec<(String, &str, u8)> = ACTIONS
             .iter()
-            .copied()
+            .map(|(key, keys, id)| (tr!(key), *keys, *id))
             .filter(|(l, _, _)| l.to_lowercase().contains(&needle))
             .collect();
         let functions: Vec<(u32, String)> = if needle.len() < 2 {
@@ -614,7 +656,7 @@ impl Component for PaletteDialog {
                             .flat()
                             .auto_focus(true)
                             .width(Size::px(580.))
-                            .placeholder("Buscar acción o función…")
+                            .placeholder(tr!("palette-placeholder"))
                             .on_submit(move |_| {
                                 if let Some(id) = first {
                                     run_action(ws, id);
@@ -624,7 +666,11 @@ impl Component for PaletteDialog {
             )
             .child(hline())
             .maybe(!actions.is_empty(), |r| {
-                r.child(rect().padding((6., 8.)).child(caption("Acciones")))
+                r.child(
+                    rect()
+                        .padding((6., 8.))
+                        .child(caption(&tr!("palette-actions"))),
+                )
             })
             .children(
                 actions
@@ -647,7 +693,11 @@ impl Component for PaletteDialog {
                     }),
             )
             .maybe(!functions.is_empty(), |r| {
-                r.child(rect().padding((6., 8.)).child(caption("Funciones")))
+                r.child(
+                    rect()
+                        .padding((6., 8.))
+                        .child(caption(&tr!("tab-functions"))),
+                )
             })
             .children(functions.into_iter().map(|(id, name)| {
                 rect()
@@ -666,58 +716,58 @@ impl Component for PaletteDialog {
                     .child(mono(name, 12., theme::TEXT))
                     .into_element()
             }))
-            .child(rect().padding((6., 10.)).child(text(
-                "Enter ejecuta la primera · Esc cierra",
-                11.,
-                theme::TEXT3,
-            )))
+            .child(
+                rect()
+                    .padding((6., 10.))
+                    .child(text(tr!("palette-hint"), 11., theme::TEXT3)),
+            )
     }
 }
 
 fn shortcuts() -> Rect {
     let groups: [(&str, &[(&str, &str)]); 4] = [
         (
-            "General",
+            "shortcuts-general",
             &[
-                ("Paleta de comandos", "Ctrl K"),
-                ("Abrir archivo", "Ctrl O"),
-                ("Cerrar sesión", "Ctrl W"),
-                ("Estos atajos", "?"),
+                ("shortcuts-palette", "Ctrl K"),
+                ("shortcuts-open-file", "Ctrl O"),
+                ("shortcuts-close-session", "Ctrl W"),
+                ("shortcuts-these", "?"),
             ],
         ),
         (
-            "Sesión",
+            "shortcuts-session",
             &[
-                ("Grabar / detener", "Ctrl R"),
-                ("Marcador", "M"),
-                ("Pausar / reanudar", "Espacio"),
-                ("Exportar", "Ctrl E"),
-                ("Comparar con…", "Ctrl D"),
+                ("palette-record-toggle", "Ctrl R"),
+                ("dialog-marker-title", "M"),
+                ("shortcuts-pause-resume", "common-space"),
+                ("common-export", "Ctrl E"),
+                ("palette-compare", "Ctrl D"),
             ],
         ),
         (
-            "Timeline",
+            "tab-timeline",
             &[
-                ("Acercar / alejar", "W  S"),
-                ("Mover", "A  D"),
-                ("Rango", "arrastrar"),
-                ("Siguiente frame lento", "N"),
-                ("Volver a vivo", "End"),
+                ("shortcuts-zoom", "W  S"),
+                ("shortcuts-pan", "A  D"),
+                ("shortcuts-range", "shortcuts-key-drag"),
+                ("shortcuts-next-slow", "N"),
+                ("shortcuts-back-to-live", "End"),
             ],
         ),
         (
-            "Listas",
+            "shortcuts-lists",
             &[
-                ("Elegir", "clic"),
-                ("Pestaña 1–5", "Ctrl 1…5"),
-                ("Quitar selección", "Esc"),
+                ("shortcuts-pick", "shortcuts-key-click"),
+                ("shortcuts-tab", "Ctrl 1…5"),
+                ("shortcuts-clear-selection", "Esc"),
             ],
         ),
     ];
     panel(960.)
         .padding(24.)
         .spacing(16.)
-        .child(title_row("Atajos"))
+        .child(title_row(&tr!("shortcuts-title")))
         .child(
             rect()
                 .horizontal()
@@ -726,14 +776,14 @@ fn shortcuts() -> Rect {
                     rect()
                         .width(Size::px(210.))
                         .spacing(10.)
-                        .child(caption(title))
+                        .child(caption(&tr!(title)))
                         .children(items.iter().map(|(label, keys)| {
                             rect()
                                 .width(Size::fill())
                                 .horizontal()
                                 .content(Content::flex())
-                                .child(text(*label, 12., theme::TEXT).width(Size::flex(1.)))
-                                .child(kbd(keys))
+                                .child(text(tr!(label), 12., theme::TEXT).width(Size::flex(1.)))
+                                .child(kbd(&tr!(keys)))
                                 .into_element()
                         }))
                         .into_element()
@@ -783,7 +833,7 @@ pub fn toast(mut ws: State<Workspace>, toast: &Toast) -> Rect {
         )
         .child(
             text(
-                toast.title.clone(),
+                tr!(&toast.title),
                 13.,
                 if toast.error {
                     theme::ERROR
@@ -804,7 +854,7 @@ pub fn toast(mut ws: State<Workspace>, toast: &Toast) -> Rect {
                 .spacing(8.)
                 .maybe(openable, |r| {
                     let path = path.clone();
-                    r.child(button("Abrir", Kind::Secondary, move |_| {
+                    r.child(button(tr!("common-open"), Kind::Secondary, move |_| {
                         if let Some(p) = &path {
                             let mut w = ws.write();
                             w.toast = None;
@@ -813,11 +863,11 @@ pub fn toast(mut ws: State<Workspace>, toast: &Toast) -> Rect {
                     }))
                 })
                 .maybe_child(folder.map(|dir| {
-                    button("Mostrar en la carpeta", Kind::Secondary, move |_| {
+                    button(tr!("toast-show-in-folder"), Kind::Secondary, move |_| {
                         super::platform::reveal(&dir);
                     })
                 }))
-                .child(button("Cerrar", Kind::Secondary, move |_| {
+                .child(button(tr!("common-close"), Kind::Secondary, move |_| {
                     ws.write().toast = None;
                 })),
         )
@@ -829,7 +879,7 @@ pub fn pick_compare(mut ws: State<Workspace>) {
         return;
     }
     spawn_in_window(async move {
-        let Some(path) = super::platform::pick_recording("Comparar con…".into()).await else {
+        let Some(path) = super::platform::pick_recording(tr!("dialog-pick-compare")).await else {
             return;
         };
         match sismo_analysis::Session::load(&path) {
@@ -841,7 +891,7 @@ pub fn pick_compare(mut ws: State<Workspace>) {
             }
             Err(error) => ws
                 .write()
-                .notify("No se pudo abrir", error.to_string(), None, true),
+                .notify("toast-open-failed", error.to_string(), None, true),
         }
     });
 }
