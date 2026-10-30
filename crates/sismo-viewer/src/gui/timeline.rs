@@ -270,8 +270,7 @@ fn draw_strip(p: &mut Scene, view: &SessionView, splits: &[GroupSplit], w: f32, 
     p.line((left, half_y), (w - PAD, half_y), 1., theme::TEXT3, 80);
     p.text("8.3", 18., half_y - 7., 10., theme::TEXT3, true, 40.);
     let count = frames.len();
-    #[allow(clippy::cast_precision_loss)]
-    let per = (width / count as f32).max(0.1);
+    let per = StripScale::new(count, w).per();
     let bar = (per - if per > 4. { 2. } else { 0. }).max(0.5);
     let selected = view.selected_frame;
     // Many frames: draw at most one bar per pixel, keeping the slowest.
@@ -310,15 +309,11 @@ fn draw_strip(p: &mut Scene, view: &SessionView, splits: &[GroupSplit], w: f32, 
         }
         i = end;
     }
-    let (start, end) = session.span();
-    let scale = Scale {
-        from: frames[0].start.min(start),
-        to: frames[count - 1].end.max(end),
-        left,
-        width,
-    };
+    let scale = StripScale::new(count, w);
     let (vf, vt) = view.selection.unwrap_or(view.view);
-    let (x0, x1) = (scale.x(vf), scale.x(vt));
+    let first = frames.partition_point(|f| f.end <= vf);
+    let last = frames.partition_point(|f| f.start < vt);
+    let (x0, x1) = (scale.x(first), scale.x(last.max(first + 1)));
     p.rect_alpha(x0, 24., (x1 - x0).max(2.), base - 22., theme::TEXT, 18);
     p.outline(
         x0,
@@ -334,17 +329,46 @@ fn draw_strip(p: &mut Scene, view: &SessionView, splits: &[GroupSplit], w: f32, 
     );
 }
 
-fn strip_scale(view: &SessionView, w: f32) -> Option<Scale> {
-    let frames = &view.session.frames;
-    let first = frames.first()?;
-    let last = frames.last()?;
-    let (start, end) = view.session.span();
-    Some(Scale {
-        from: first.start.min(start),
-        to: last.end.max(end),
-        left: 46.,
-        width: w - 46. - PAD,
-    })
+/// The frames strip lays bars out one per frame, in order, so x maps to a
+/// frame index rather than to time: idle gaps between frames take no room.
+#[derive(Debug, Clone, Copy)]
+struct StripScale {
+    count: usize,
+    left: f32,
+    width: f32,
+}
+
+impl StripScale {
+    const LEFT: f32 = 46.;
+
+    fn new(count: usize, w: f32) -> Self {
+        Self {
+            count: count.max(1),
+            left: Self::LEFT,
+            width: (w - Self::LEFT - PAD).max(1.),
+        }
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn per(self) -> f32 {
+        self.width / self.count as f32
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn x(self, index: usize) -> f32 {
+        self.left + index as f32 * self.per()
+    }
+
+    /// Frame under `x`, clamped to the strip.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    fn index(self, x: f64) -> usize {
+        let ratio = ((x - f64::from(self.left)) / f64::from(self.width)).clamp(0., 1.);
+        ((ratio * self.count as f64) as usize).min(self.count - 1)
+    }
 }
 
 fn draw_ruler(p: &mut Scene, view: &SessionView, w: f32) {
@@ -425,7 +449,15 @@ fn draw_lanes(p: &mut Scene, view: &SessionView, query: &Query, lanes: &[Lane], 
         let Some(thread) = session.thread(lane.thread) else {
             continue;
         };
-        let mut last_px: Vec<f32> = vec![f32::MIN; usize::from(lane.rows)];
+        // Spans too thin to read are merged per row with their close
+        // neighbours of the same color, so a long range reads as blocks of
+        // activity instead of hairlines.
+        let mut runs: Vec<Option<Run>> = vec![None; usize::from(lane.rows)];
+        let row_y = |depth: usize| {
+            #[allow(clippy::cast_precision_loss)]
+            let y = lane.top + depth as f32 * ROW_H;
+            y
+        };
         for (index, span) in thread
             .indices_in(view.view.0, view.view.1)
             .into_iter()
@@ -435,15 +467,31 @@ fn draw_lanes(p: &mut Scene, view: &SessionView, query: &Query, lanes: &[Lane], 
             let x1 = scale.x(span.end.min(session.end)).min(w - PAD);
             let row = usize::from(span.depth);
             let width = x1 - x0;
-            if width < 1. && last_px.get(row).is_some_and(|l| (x0 - *l).abs() < 1.) {
-                continue;
-            }
-            if let Some(slot) = last_px.get_mut(row) {
-                *slot = x0;
-            }
             let y = lane.top + f32::from(span.depth) * ROW_H;
             let rgb = group_color(session, span.callsite);
             let matches = !filtering || query.matches_span(session, &thread.name, span);
+            let Some(slot) = runs.get_mut(row) else {
+                continue;
+            };
+            if width < Run::THIN && view.selected_span != Some((lane.thread, index)) {
+                match slot {
+                    Some(run) if run.joins(x0, rgb, matches) => run.x1 = run.x1.max(x1),
+                    _ => {
+                        if let Some(done) = slot.replace(Run {
+                            x0,
+                            x1,
+                            rgb,
+                            matches,
+                        }) {
+                            done.draw(p, row_y(row));
+                        }
+                    }
+                }
+                continue;
+            }
+            if let Some(done) = slot.take() {
+                done.draw(p, y);
+            }
             if matches {
                 p.rect(x0, y, (width - 1.).max(1.), ROW_H - 2., rgb);
             } else {
@@ -468,6 +516,40 @@ fn draw_lanes(p: &mut Scene, view: &SessionView, query: &Query, lanes: &[Lane], 
                     width - 12.,
                 );
             }
+        }
+        for (row, run) in runs.into_iter().enumerate() {
+            if let Some(run) = run {
+                run.draw(p, row_y(row));
+            }
+        }
+    }
+}
+
+/// Thin spans of one row drawn as one block.
+#[derive(Debug, Clone, Copy)]
+struct Run {
+    x0: f32,
+    x1: f32,
+    rgb: Rgb,
+    matches: bool,
+}
+
+impl Run {
+    /// Spans narrower than this many pixels are merged.
+    const THIN: f32 = 3.;
+    /// Largest gap, in pixels, bridged between two merged spans.
+    const GAP: f32 = 1.5;
+
+    fn joins(&self, x0: f32, rgb: Rgb, matches: bool) -> bool {
+        self.rgb == rgb && self.matches == matches && x0 <= self.x1 + Self::GAP
+    }
+
+    fn draw(self, p: &mut Scene, y: f32) {
+        let width = (self.x1 - self.x0).max(1.);
+        if self.matches {
+            p.rect(self.x0, y, width, ROW_H - 2., self.rgb);
+        } else {
+            p.rect_alpha(self.x0, y, width, ROW_H - 2., self.rgb, 50);
         }
     }
 }
@@ -869,17 +951,17 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                 return;
             }
             let x = e.element_location().x;
-            let w = ws.peek();
-            let Some(scale) = w.active().and_then(|v| strip_scale(v, strip_w)) else {
+            let count = ws.peek().active().map_or(0, |v| v.session.frames.len());
+            if count == 0 {
                 return;
-            };
-            let t = scale.t(x);
-            drop(w);
+            }
+            // For the strip, the drag origin is a frame index, not a time.
+            let index = StripScale::new(count, strip_w).index(x);
             DRAG.with(|d| {
                 *d.borrow_mut() = Some(Drag {
                     kind: DragKind::Select,
                     origin_x: x,
-                    origin_t: t,
+                    origin_t: index as u64,
                     moved: false,
                 });
             });
@@ -897,11 +979,16 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             }
             let mut w = ws.write();
             let Some(v) = w.active_mut() else { return };
-            let Some(scale) = strip_scale(v, strip_w) else {
+            let frames = &v.session.frames;
+            if frames.is_empty() {
                 return;
-            };
-            let t = scale.t(x);
-            let range = (drag.origin_t.min(t), drag.origin_t.max(t));
+            }
+            let here = StripScale::new(frames.len(), strip_w).index(x);
+            let origin = usize::try_from(drag.origin_t)
+                .unwrap_or(0)
+                .min(frames.len() - 1);
+            let (a, b) = (origin.min(here), origin.max(here));
+            let range = (frames[a].start, frames[b].end);
             v.selection = Some(range);
             v.view = range;
             v.follow = false;
@@ -925,7 +1012,7 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             }
             let mut w = ws.write();
             let Some(v) = w.active_mut() else { return };
-            let index = v.session.frames.partition_point(|f| f.end <= drag.origin_t);
+            let index = usize::try_from(drag.origin_t).unwrap_or(0);
             if let Some(frame) = v.session.frames.get(index) {
                 let frame_index = frame.index;
                 focus_frame(v, frame_index);
@@ -1095,4 +1182,21 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
         .child(ScrollView::new().height(Size::flex(1.)).child(lanes_el))
         .maybe(view.selected_span.is_some(), |r| r.child(hline()))
         .maybe_child(detail(ws, view))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StripScale;
+
+    #[test]
+    fn strip_click_lands_on_the_bar_under_it() {
+        let scale = StripScale::new(100, 1046.);
+        let per = f64::from(scale.per());
+        for index in [0, 37, 99] {
+            let middle = f64::from(scale.x(index)) + per / 2.;
+            assert_eq!(scale.index(middle), index);
+        }
+        assert_eq!(scale.index(0.), 0);
+        assert_eq!(scale.index(5000.), 99);
+    }
 }
