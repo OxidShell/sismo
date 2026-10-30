@@ -774,6 +774,36 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             }
         })
         .background(lanes_paint)
+        .on_mouse_down(move |e: Event<MouseEventData>| {
+            if e.button != Some(MouseButton::Right) {
+                return;
+            }
+            let (x, y) = (e.element_location.x, e.element_location.y);
+            let global = e.global_location;
+            let mut w = ws.write();
+            let Some(v) = w.active_mut() else { return };
+            let (lane_list, _) = lanes(v);
+            let Some((thread, index)) = hit_span(v, &lane_list, lanes_w, x, y) else {
+                return;
+            };
+            let Some(callsite) = v
+                .session
+                .thread(thread)
+                .and_then(|t| t.spans.get(index as usize))
+                .map(|s| s.callsite)
+            else {
+                return;
+            };
+            v.selected_span = Some((thread, index));
+            v.selected_function = Some(callsite);
+            w.menu = Some(super::context_menu::MenuTarget {
+                callsite,
+                thread: Some(thread),
+                span: Some(index),
+                x: global.x,
+                y: global.y,
+            });
+        })
         .on_wheel(move |e: Event<WheelEventData>| {
             if e.delta_y.abs() < f64::EPSILON {
                 return;

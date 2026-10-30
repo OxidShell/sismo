@@ -129,6 +129,10 @@ pub enum Origin {
 }
 
 /// One open session tab.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent view toggles, not a state machine"
+)]
 pub struct SessionView {
     pub id: u64,
     pub origin: Origin,
@@ -161,6 +165,12 @@ pub struct SessionView {
     /// Recording to diff against (A), this session being B.
     pub compare: Option<(PathBuf, Box<Session>)>,
     pub compare_metric: sismo_analysis::Metric,
+    /// Whether the per-app crate groups from the preferences were applied.
+    pub groups_applied: bool,
+    /// Set when pairing just succeeded, so the viewer can remember the app.
+    pub paired_now: bool,
+    /// Time span the timeline keeps while following a live app.
+    pub live_window_ns: u64,
 }
 
 impl SessionView {
@@ -192,6 +202,9 @@ impl SessionView {
             hidden_sources: Vec::new(),
             compare: None,
             compare_metric: sismo_analysis::Metric::P95,
+            groups_applied: false,
+            paired_now: false,
+            live_window_ns: 3_000_000_000,
         }
     }
 
@@ -373,6 +386,7 @@ impl SessionView {
                     }
                 }
                 ClientEvent::Paired => {
+                    self.paired_now = true;
                     live.status = LiveStatus::Streaming;
                     conn.send(Command::Subscribe { history: true });
                 }
@@ -440,7 +454,7 @@ impl SessionView {
                 let (start, end) = self.session.span();
                 let current = self.view.1.saturating_sub(self.view.0);
                 let width = if current < 1_000_000 {
-                    3_000_000_000
+                    self.live_window_ns
                 } else {
                     current
                 };

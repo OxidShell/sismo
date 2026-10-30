@@ -131,6 +131,27 @@ fn values(session: &Session, key: &str, prefix: &str) -> Vec<Suggestion> {
     out
 }
 
+/// Marks a suggestion that replaces the whole query (recent and saved ones).
+const WHOLE: char = '\u{1}';
+
+fn history(saved: &[(String, String)], recent: &[String]) -> Vec<Suggestion> {
+    saved
+        .iter()
+        .map(|(name, query)| Suggestion {
+            insert: format!("{WHOLE}{query}"),
+            title: format!("★ {name}"),
+            detail: query.clone(),
+            dot: None,
+        })
+        .chain(recent.iter().take(5).map(|query| Suggestion {
+            insert: format!("{WHOLE}{query}"),
+            title: format!("↺ {query}"),
+            detail: String::new(),
+            dot: None,
+        }))
+        .collect()
+}
+
 fn suggestions(session: &Session, text: &str) -> Vec<Suggestion> {
     let token = last_token(text);
     let token = token.strip_prefix('-').unwrap_or(token);
@@ -163,6 +184,9 @@ fn suggestions(session: &Session, text: &str) -> Vec<Suggestion> {
 }
 
 fn apply(text: &str, insert: &str) -> String {
+    if let Some(whole) = insert.strip_prefix(WHOLE) {
+        return whole.to_owned();
+    }
     let token = last_token(text);
     let negate = token.starts_with('-');
     let head = &text[..text.len() - token.len()];
@@ -192,12 +216,23 @@ impl Component for QueryBar {
         let focused = focus.read().is_focused();
 
         let w = ws.read();
-        let (list, error) = w.sessions.get(index).map_or((Vec::new(), None), |v| {
+        let saved: Vec<(String, String)> = w
+            .prefs
+            .saved_queries
+            .iter()
+            .map(|q| (q.name.clone(), q.query.clone()))
+            .collect();
+        let (mut list, error) = w.sessions.get(index).map_or((Vec::new(), None), |v| {
             (
                 suggestions(&v.session, &text_state.read()),
                 v.query_error.clone(),
             )
         });
+        if text_state.read().trim().is_empty() {
+            let mut head = history(&saved, &w.prefs.recent_queries);
+            head.append(&mut list);
+            list = head;
+        }
         drop(w);
         let current = (*selected.read()).min(list.len().saturating_sub(1));
 
@@ -223,6 +258,29 @@ impl Component for QueryBar {
             }
             Key::Named(NamedKey::ArrowUp) => {
                 selected.set(current.saturating_sub(1));
+                false
+            }
+            Key::Named(NamedKey::Enter) => {
+                let value = text_state.peek().clone();
+                ws.write().prefs.push_query(&value);
+                true
+            }
+            Key::Character(c)
+                if (e.modifiers.ctrl() || e.modifiers.meta()) && c.eq_ignore_ascii_case("s") =>
+            {
+                let value = text_state.peek().trim().to_owned();
+                if !value.is_empty() {
+                    let mut w = ws.write();
+                    w.prefs.saved_queries.retain(|q| q.query != value);
+                    w.prefs.saved_queries.insert(
+                        0,
+                        super::prefs::SavedQuery {
+                            name: value.clone(),
+                            query: value,
+                        },
+                    );
+                    w.prefs.save();
+                }
                 false
             }
             Key::Named(NamedKey::Tab) => {

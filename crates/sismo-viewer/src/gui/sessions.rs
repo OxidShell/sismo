@@ -12,7 +12,7 @@ use super::widgets::{Kind, badge, bordered, button, caption, kbd, mono, text};
 use super::{Workspace, dialogs};
 use crate::client::Discovered;
 
-fn top_bar(ws: State<Workspace>) -> Rect {
+fn top_bar(mut ws: State<Workspace>) -> Rect {
     rect()
         .width(Size::fill())
         .height(Size::px(44.))
@@ -31,6 +31,9 @@ fn top_bar(ws: State<Workspace>) -> Rect {
         .child(text("sismo", 14., theme::TEXT).font_weight(600))
         .child(text(tr!("sessions-title"), 13., theme::TEXT).font_weight(500))
         .child(rect().width(Size::flex(1.)))
+        .child(button(tr!("settings-title"), Kind::Secondary, move |_| {
+            ws.write().settings = Some(super::settings::Section::default());
+        }))
         .child(kbd("Ctrl O"))
         .child(button(
             tr!("sessions-open-file"),

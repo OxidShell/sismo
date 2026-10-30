@@ -14,7 +14,7 @@ use super::theme;
 use super::widgets::{Kind, bordered, button, caption, hline, kbd, mono, panel, scrim, text};
 use super::{Dialog, Toast, Workspace};
 use crate::client::Command;
-use crate::workspace::{LiveStatus, RecordFrom, StopRule, Tab, recordings_dir};
+use crate::workspace::{LiveStatus, RecordFrom, StopRule, Tab};
 
 /// Opens the native picker and loads the chosen recording.
 pub fn pick_file(mut ws: State<Workspace>) {
@@ -219,7 +219,8 @@ impl Component for RecordDialog {
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs());
-            recordings_dir()
+            w.prefs
+                .recordings_dir()
                 .join(format!("{app}-{stamp}.sismo"))
                 .display()
                 .to_string()
@@ -358,10 +359,11 @@ impl Component for ExportDialog {
             .peek()
             .active()
             .map_or_else(|| "sismo".into(), |v| v.session.info.app.clone());
+        let export_dir = ws.peek().prefs.recordings_dir();
         let current = *format.read();
         let ext = FORMATS[current].0.extension();
         let mut path = use_state(move || {
-            recordings_dir()
+            export_dir
                 .join(format!("{base}-export.pftrace"))
                 .display()
                 .to_string()
@@ -577,7 +579,7 @@ impl Component for MarkerDialog {
 }
 
 /// Command palette entries: label, shortcut, action id.
-const ACTIONS: [(&str, &str, u8); 12] = [
+const ACTIONS: [(&str, &str, u8); 14] = [
     ("palette-compare", "Ctrl D", 11),
     ("sessions-open-file", "Ctrl O", 0),
     ("palette-record-toggle", "Ctrl R", 1),
@@ -590,6 +592,8 @@ const ACTIONS: [(&str, &str, u8); 12] = [
     ("palette-app-filter", "", 8),
     ("palette-back-to-sessions", "", 9),
     ("palette-shortcuts", "?", 10),
+    ("settings-title", "Ctrl ,", 12),
+    ("settings-groups", "", 13),
 ];
 
 fn run_action(mut ws: State<Workspace>, id: u8) {
@@ -606,6 +610,14 @@ fn run_action(mut ws: State<Workspace>, id: u8) {
         8 => ws.write().dialog = Some(Dialog::AppFilter),
         9 => ws.write().active = None,
         11 => pick_compare(ws),
+        12 => ws.write().settings = Some(super::settings::Section::default()),
+        13 => {
+            if ws.peek().active().is_some() {
+                ws.write().dialog = Some(Dialog::Groups);
+            } else {
+                ws.write().settings = Some(super::settings::Section::Groups);
+            }
+        }
         _ => ws.write().dialog = Some(Dialog::Shortcuts),
     }
 }
@@ -800,6 +812,7 @@ pub fn render(ws: State<Workspace>, dialog: &Dialog) -> Rect {
         Dialog::Palette { .. } => PaletteDialog(ws).into_element(),
         Dialog::Shortcuts => shortcuts().into_element(),
         Dialog::Marker { .. } => MarkerDialog(ws).into_element(),
+        Dialog::Groups => super::groups::GroupsDialog(ws).into_element(),
     };
     scrim(move |_| close(ws), content)
 }

@@ -58,9 +58,8 @@ pub enum Command {
 
 /// The viewer's persistent key, so apps remember a paired viewer.
 fn viewer_keypair() -> Keypair {
-    let path = config_dir().map(|d| d.join("viewer-key"));
-    if let Some(path) = &path
-        && let Ok(bytes) = std::fs::read(path)
+    let path = viewer_key_path();
+    if let Ok(bytes) = std::fs::read(&path)
         && bytes.len() == 64
     {
         let mut keypair = Keypair::generate();
@@ -69,21 +68,19 @@ fn viewer_keypair() -> Keypair {
         return keypair;
     }
     let keypair = Keypair::generate();
-    if let Some(path) = path {
-        let mut bytes = keypair.public.to_vec();
-        bytes.extend_from_slice(&keypair.private);
-        let _ = path
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| std::fs::write(&path, bytes));
-    }
+    let mut bytes = keypair.public.to_vec();
+    bytes.extend_from_slice(&keypair.private);
+    let _ = path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::write(&path, bytes));
     keypair
 }
 
-/// Per-user configuration directory of the viewer (via istmo paths).
+/// Where the viewer keeps its static key (istmo config dir).
 #[must_use]
-pub fn config_dir() -> Option<PathBuf> {
-    Some(istmo::path::config_dir().to_path_buf())
+pub fn viewer_key_path() -> PathBuf {
+    istmo::path::config_dir().join("viewer-key")
 }
 
 /// Background LAN scanner; new apps arrive on [`Scanner::events`].

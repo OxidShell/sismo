@@ -77,3 +77,5 @@ menu-copy-name = Copiar nombre
 menu-copy-json = Copiar como JSON para agente
 menu-copy-source = Copiar ruta del código
 menu-marker = Agregar marcador aquí
+
+shell-edit-groups = Editar

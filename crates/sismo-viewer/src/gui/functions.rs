@@ -349,6 +349,21 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                         v.selected_function = Some(callsite);
                     }
                 })
+                .on_mouse_down(move |e: Event<MouseEventData>| {
+                    if e.button == Some(MouseButton::Right) {
+                        let mut w = ws.write();
+                        if let Some(v) = w.active_mut() {
+                            v.selected_function = Some(callsite);
+                        }
+                        w.menu = Some(super::context_menu::MenuTarget {
+                            callsite,
+                            thread: None,
+                            span: None,
+                            x: e.global_location.x,
+                            y: e.global_location.y,
+                        });
+                    }
+                })
                 .child(
                     rect()
                         .width(Size::flex(1.))

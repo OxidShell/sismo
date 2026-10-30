@@ -109,6 +109,9 @@ fn top_bar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
         .child(status)
         .child(rect().width(Size::flex(1.)))
         .maybe_child(rec)
+        .child(button(tr!("settings-title"), Kind::Secondary, move |_| {
+            ws.write().settings = Some(super::settings::Section::default());
+        }))
         .maybe(is_live && recording, |r| {
             r.child(button(tr!("shell-marker"), Kind::Secondary, move |_| {
                 ws.write().dialog = Some(Dialog::Marker {
@@ -302,7 +305,15 @@ fn side_panel(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                             .horizontal()
                             .content(Content::flex())
                             .width(Size::fill())
+                            .cross_align(Alignment::Center)
                             .child(caption("Crates").width(Size::flex(1.)))
+                            .child(
+                                rect()
+                                    .padding((0., 8.))
+                                    .cursor(CursorIcon::Pointer)
+                                    .on_press(move |_| ws.write().dialog = Some(Dialog::Groups))
+                                    .child(text(tr!("shell-edit-groups"), 11., theme::TEXT2)),
+                            )
                             .child(text(tr!("shell-time-share"), 11., theme::TEXT3)),
                     )
                     .children(by_group.into_iter().filter(|(_, l)| !l.is_empty()).map(

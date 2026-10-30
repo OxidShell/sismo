@@ -11,10 +11,12 @@
     clippy::too_many_arguments
 )]
 
+mod context_menu;
 mod dialogs;
 mod draw;
 mod flame;
 mod functions;
+mod groups;
 mod i18n;
 mod logs;
 mod metrics;
@@ -22,6 +24,7 @@ mod platform;
 mod prefs;
 mod query_bar;
 mod sessions;
+mod settings;
 mod shell;
 mod theme;
 mod timeline;
@@ -38,6 +41,11 @@ use crate::workspace::{Saved, SessionView, Tab};
 use i18n::tr;
 use prefs::Prefs;
 
+/// Screen to show first (used by snapshot tests): a settings section
+/// name, `groups` or `menu`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartScreen(pub &'static str);
+
 /// Recording to diff the opened file against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompareWith(pub PathBuf);
@@ -52,6 +60,7 @@ pub enum Dialog {
     Palette { text: String },
     Shortcuts,
     Marker { text: String },
+    Groups,
 }
 
 /// Transient notice in the bottom-right corner.
@@ -76,6 +85,9 @@ pub struct Workspace {
     pub prefs: Prefs,
     pub dialog: Option<Dialog>,
     pub toast: Option<Toast>,
+    /// Open settings section, if the settings screen is showing.
+    pub settings: Option<settings::Section>,
+    pub menu: Option<context_menu::MenuTarget>,
     next_id: u64,
 }
 
@@ -93,6 +105,8 @@ impl Workspace {
             prefs: Prefs::load(),
             dialog: None,
             toast: None,
+            settings: None,
+            menu: None,
             next_id: 1,
         };
         if let Some(file) = file {
@@ -136,9 +150,11 @@ impl Workspace {
             return;
         }
         match SessionView::open_file(self.next_id, path) {
-            Ok(view) => {
+            Ok(mut view) => {
                 self.next_id += 1;
                 self.prefs.push_recent(path);
+                view.session.groups = self.prefs.groups_for(&view.session.info.app);
+                view.groups_applied = true;
                 self.sessions.push(view);
                 self.active = Some(self.sessions.len() - 1);
             }
@@ -162,6 +178,37 @@ impl Workspace {
                 self.active = Some(self.sessions.len() - 1);
             }
             Err(error) => self.notify("toast-connect-failed", error.to_string(), None, true),
+        }
+    }
+
+    fn start_on(&mut self, screen: &str) {
+        use settings::Section;
+        let section = match screen {
+            "appearance" => Some(Section::Appearance),
+            "recording" => Some(Section::Recording),
+            "network" => Some(Section::Network),
+            "devices" => Some(Section::Devices),
+            "groups-settings" => Some(Section::Groups),
+            "shortcuts" => Some(Section::Shortcuts),
+            "agents" => Some(Section::Agents),
+            _ => None,
+        };
+        if section.is_some() {
+            self.settings = section;
+        } else if screen == "groups" {
+            self.dialog = Some(Dialog::Groups);
+        } else if screen == "menu"
+            && let Some(callsite) = self
+                .active()
+                .and_then(|v| v.session.threads.first()?.spans.first().map(|s| s.callsite))
+        {
+            self.menu = Some(context_menu::MenuTarget {
+                callsite,
+                thread: None,
+                span: None,
+                x: 600.,
+                y: 300.,
+            });
         }
     }
 
@@ -201,9 +248,29 @@ impl Workspace {
         let mut saved: Vec<Saved> = Vec::new();
         let active_id = self.active.map(|i| self.sessions_id(i));
         let mut wants_pairing = false;
+        let mut paired: Vec<(String, String, std::net::SocketAddr)> = Vec::new();
+        let live_window = self.prefs.live_window_ns();
         for session in &mut self.sessions {
+            if session.live_window_ns != live_window {
+                session.live_window_ns = live_window;
+                session.view = (session.view.1.saturating_sub(live_window), session.view.1);
+            }
             if let Some(done) = session.poll_live() {
                 saved.push(done);
+            }
+            if !session.groups_applied && !session.session.info.app.is_empty() {
+                session.session.groups = self.prefs.groups_for(&session.session.info.app);
+                session.groups_applied = true;
+                session.revision += 1;
+            }
+            if std::mem::take(&mut session.paired_now)
+                && let Some(live) = session.live()
+            {
+                paired.push((
+                    session.session.info.app.clone(),
+                    session.session.info.device.clone(),
+                    live.addr,
+                ));
             }
             let pairing = matches!(
                 session.live().map(|l| &l.status),
@@ -218,6 +285,14 @@ impl Workspace {
         }
         for done in saved {
             self.recording_saved(&done);
+        }
+        for (app, device, addr) in paired {
+            let fingerprint = self
+                .discovered
+                .iter()
+                .find(|d| d.addr == addr)
+                .map_or_else(|| addr.to_string(), |d| d.beacon.fingerprint.clone());
+            self.prefs.remember_pairing(&app, &device, &fingerprint);
         }
         if self
             .toast
@@ -257,6 +332,12 @@ fn handle_shortcut(mut ws: State<Workspace>, event: &KeyboardEventData) {
     match &event.key {
         Key::Named(NamedKey::Escape) => {
             let mut w = ws.write();
+            if w.menu.take().is_some() {
+                return;
+            }
+            if w.dialog.is_none() && w.settings.take().is_some() {
+                return;
+            }
             if w.dialog.take().is_none()
                 && let Some(view) = w.active_mut()
             {
@@ -274,6 +355,7 @@ fn handle_shortcut(mut ws: State<Workspace>, event: &KeyboardEventData) {
             }
             "o" => dialogs::pick_file(ws),
             "d" => dialogs::pick_compare(ws),
+            "," => ws.write().settings = Some(settings::Section::default()),
             "r" => dialogs::toggle_record(ws),
             "e" if ws.peek().active.is_some() => {
                 ws.write().dialog = Some(Dialog::Export);
@@ -332,8 +414,13 @@ fn app() -> impl IntoElement {
     let live = use_try_consume::<Option<SocketAddr>>().flatten();
     let tab = use_try_consume::<Tab>();
     let compare = use_try_consume::<Option<CompareWith>>().flatten();
+    let start = use_try_consume::<StartScreen>();
+    let language = use_try_consume::<prefs::Language>();
     let mut ws = use_state(move || {
         let mut workspace = Workspace::new(file, live);
+        if let Some(language) = language {
+            workspace.prefs.language = Some(language);
+        }
         if let (Some(CompareWith(path)), Some(view)) = (compare, workspace.active_mut()) {
             match sismo_analysis::Session::load(&path) {
                 Ok((other, _)) => {
@@ -348,9 +435,13 @@ fn app() -> impl IntoElement {
         if let (Some(tab), Some(view)) = (tab, workspace.active_mut()) {
             view.tab = tab;
         }
+        if let Some(StartScreen(screen)) = start {
+            workspace.start_on(screen);
+        }
         workspace
     });
     freya::i18n::use_init_i18n(move || i18n::config(ws.peek().prefs.language()));
+    use_init_theme(dark_theme);
     use_hook(move || {
         spawn(async move {
             loop {
@@ -363,10 +454,12 @@ fn app() -> impl IntoElement {
     });
 
     let w = ws.read();
-    let screen = match w.active {
-        Some(index) => shell::session_screen(ws, index).into_element(),
-        None => sessions::sessions_screen(ws).into_element(),
+    let screen = match (w.settings, w.active) {
+        (Some(_), _) => settings::SettingsScreen(ws).into_element(),
+        (None, Some(index)) => shell::session_screen(ws, index).into_element(),
+        (None, None) => sessions::sessions_screen(ws).into_element(),
     };
+    let menu = w.menu.map(|m| context_menu::render(ws, m));
     let dialog = w.dialog.as_ref().map(|d| dialogs::render(ws, d));
     let toast = w.toast.as_ref().map(|t| dialogs::toast(ws, t));
     drop(w);
@@ -384,16 +477,17 @@ fn app() -> impl IntoElement {
             }
         })
         .child(screen)
+        .maybe_child(menu)
         .maybe_child(dialog)
         .maybe_child(toast)
 }
 
 /// Opens the viewer window; blocks until it closes.
 pub fn run(file: Option<PathBuf>, live: Option<SocketAddr>, compare: Option<CompareWith>) {
-    platform::install();
     use theme::{
         MONO, MONO_MEDIUM, MONO_REGULAR, MONO_SEMIBOLD, SANS, SANS_REGULAR, SANS_SEMIBOLD,
     };
+    platform::install();
     launch(
         LaunchConfig::new()
             .with_font(SANS, Bytes::from_static(SANS_REGULAR))
@@ -518,6 +612,59 @@ mod live_snapshot {
                 "sismo-live-{}.png",
                 tab.label().trim_start_matches("tab-")
             )));
+        }
+    }
+}
+
+#[cfg(test)]
+mod screen_snapshots {
+    use std::path::PathBuf;
+
+    use freya::prelude::*;
+    use freya_testing::prelude::*;
+
+    use super::{StartScreen, prefs::Language, theme};
+
+    /// Renders settings sections, the groups editor and the context menu
+    /// for `SISMO_SNAPSHOT_FILE` in Spanish and English.
+    #[test]
+    #[ignore = "writes PNGs; run explicitly"]
+    fn render_screens() {
+        let file = std::env::var_os("SISMO_SNAPSHOT_FILE").map(PathBuf::from);
+        let dir =
+            std::env::var_os("SISMO_SNAPSHOT_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        let screens = [
+            "appearance",
+            "recording",
+            "devices",
+            "agents",
+            "groups",
+            "menu",
+        ];
+        for language in [Language::Spanish, Language::English] {
+            for screen in screens {
+                let file = file.clone();
+                let (mut runner, ()) = TestingRunner::new(
+                    super::app,
+                    (1440., 900.).into(),
+                    move |r| {
+                        r.provide_root_context(move || file.clone());
+                        r.provide_root_context(move || StartScreen(screen));
+                        r.provide_root_context(move || language);
+                    },
+                    1.,
+                );
+                for (name, bytes) in [
+                    (theme::SANS, theme::SANS_REGULAR),
+                    (theme::SANS, theme::SANS_SEMIBOLD),
+                    (theme::MONO, theme::MONO_REGULAR),
+                ] {
+                    Platform::get().load_font(name, Bytes::from_static(bytes));
+                }
+                runner.sync_and_update();
+                runner.sync_and_update();
+                runner.render_to_file(dir.join(format!("screen-{}-{screen}.png", language.tag())));
+            }
         }
     }
 }

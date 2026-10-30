@@ -374,6 +374,31 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             }
         })
         .background(paint)
+        .on_mouse_down(move |e: Event<MouseEventData>| {
+            if e.button != Some(MouseButton::Right) {
+                return;
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            let (x, y) = (e.element_location.x as f32, e.element_location.y as f32);
+            let hit = HITS.with(|h| {
+                h.borrow().get(&id).and_then(|list| {
+                    list.iter()
+                        .find(|(hx, hy, hw, _)| {
+                            x >= *hx && x < hx + hw && y >= *hy && y < hy + ROW_H
+                        })
+                        .and_then(|(_, _, _, path)| path.last().copied())
+                })
+            });
+            if let Some(callsite) = hit {
+                ws.write().menu = Some(super::context_menu::MenuTarget {
+                    callsite,
+                    thread: None,
+                    span: None,
+                    x: e.global_location.x,
+                    y: e.global_location.y,
+                });
+            }
+        })
         .on_pointer_press(move |e: Event<PointerEventData>| {
             let loc = e.element_location();
             #[allow(clippy::cast_possible_truncation)]
