@@ -17,6 +17,7 @@ mod flame;
 mod functions;
 mod logs;
 mod metrics;
+mod platform;
 mod query_bar;
 mod sessions;
 mod shell;
@@ -377,6 +378,7 @@ fn app() -> impl IntoElement {
 
 /// Opens the viewer window; blocks until it closes.
 pub fn run(file: Option<PathBuf>, live: Option<SocketAddr>, compare: Option<CompareWith>) {
+    platform::install();
     use theme::{
         MONO, MONO_MEDIUM, MONO_REGULAR, MONO_SEMIBOLD, SANS, SANS_REGULAR, SANS_SEMIBOLD,
     };

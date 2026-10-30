@@ -80,14 +80,10 @@ fn viewer_keypair() -> Keypair {
     keypair
 }
 
-/// `$XDG_CONFIG_HOME/sismo`, `~/.config/sismo` or `%APPDATA%\sismo`.
+/// Per-user configuration directory of the viewer (via istmo paths).
 #[must_use]
 pub fn config_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .map(|d| d.join("sismo"))
+    Some(istmo::path::config_dir().to_path_buf())
 }
 
 /// Background LAN scanner; new apps arrive on [`Scanner::events`].

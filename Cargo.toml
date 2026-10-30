@@ -36,7 +36,11 @@ freya = { version = "=0.5.0-rc.13" }
 freya-winit = "=0.5.0-rc.13"
 freya-core = "=0.5.0-rc.13"
 freya-engine = "=0.5.0-rc.13"
-rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
+istmo = "0.1.1-alpha.4"
+istmo-file-picker = "0.1.1-alpha.4"
+istmo-opener = "0.1.1-alpha.4"
+istmo-plugins = { version = "0.1.1-alpha.4", features = ["desktop-publisher"] }
+bincode = { version = "2", features = ["derive", "std"] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
@@ -44,3 +48,11 @@ too_many_lines = "allow"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
+
+# System locale (istmo-plugins SystemInfo) is not published yet; take the
+# sibling istmo checkout so every istmo crate links one istmo-core.
+[patch.crates-io]
+istmo-core = { path = "../istmo/istmo/crates/core" }
+istmo-macros = { path = "../istmo/istmo/crates/macros" }
+istmo-build = { path = "../istmo/istmo/crates/build" }
+istmo-plugins = { path = "../istmo/istmo/crates/plugins" }

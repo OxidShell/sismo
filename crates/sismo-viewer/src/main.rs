@@ -6,6 +6,8 @@ mod client;
 mod gui;
 mod workspace;
 
+istmo::runtime!(plugins: [],);
+
 use clap::Parser;
 
 fn main() -> std::process::ExitCode {

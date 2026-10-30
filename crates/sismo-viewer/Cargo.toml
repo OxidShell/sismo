@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [features]
 default = ["gui"]
-gui = ["dep:freya", "dep:freya-engine", "dep:rfd"]
+gui = ["dep:freya", "dep:freya-engine", "dep:istmo-file-picker", "dep:istmo-opener", "dep:istmo-plugins"]
 
 [dependencies]
 sismo-format.workspace = true
@@ -27,7 +27,11 @@ tokio.workspace = true
 flume.workspace = true
 freya = { workspace = true, optional = true }
 freya-engine = { workspace = true, optional = true }
-rfd = { workspace = true, optional = true }
+istmo.workspace = true
+istmo-file-picker = { workspace = true, optional = true }
+istmo-opener = { workspace = true, optional = true }
+istmo-plugins = { workspace = true, optional = true }
+bincode.workspace = true
 
 [dev-dependencies]
 freya-testing = "=0.5.0-rc.13"

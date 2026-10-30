@@ -17,14 +17,10 @@ use crate::workspace::{LiveStatus, RecordFrom, StopRule, Tab, recordings_dir};
 
 /// Opens the native picker and loads the chosen recording.
 pub fn pick_file(mut ws: State<Workspace>) {
-    spawn(async move {
-        let picked = rfd::AsyncFileDialog::new()
-            .set_title("Abrir grabación de sismo")
-            .add_filter("sismo", &["sismo"])
-            .pick_file()
-            .await;
-        if let Some(file) = picked {
-            ws.write().open_file(file.path());
+    spawn_in_window(async move {
+        if let Some(path) = super::platform::pick_recording("Abrir grabación de sismo".into()).await
+        {
+            ws.write().open_file(&path);
         }
     });
 }
@@ -47,18 +43,16 @@ pub fn toggle_record(mut ws: State<Workspace>) {
 
 /// Saves everything received from a live app so far.
 pub fn save_received(mut ws: State<Workspace>) {
-    spawn(async move {
+    spawn_in_window(async move {
         let name = ws.peek().active().map_or_else(
             || "recibido.sismo".into(),
             |v| format!("{}-recibido.sismo", v.session.info.app),
         );
-        let picked = rfd::AsyncFileDialog::new()
-            .set_file_name(name)
-            .set_directory(recordings_dir())
-            .save_file()
-            .await;
-        let Some(file) = picked else { return };
-        let path = file.path().to_path_buf();
+        let Some(path) =
+            super::platform::save_path("Guardar lo recibido".into(), name, "sismo").await
+        else {
+            return;
+        };
         let result = ws.peek().active().map(|v| v.save_received(&path));
         let mut w = ws.write();
         match result {
@@ -820,7 +814,7 @@ pub fn toast(mut ws: State<Workspace>, toast: &Toast) -> Rect {
                 })
                 .maybe_child(folder.map(|dir| {
                     button("Mostrar en la carpeta", Kind::Secondary, move |_| {
-                        let () = Platform::get().open_url(format!("file://{}", dir.display()));
+                        super::platform::reveal(&dir);
                     })
                 }))
                 .child(button("Cerrar", Kind::Secondary, move |_| {
@@ -834,14 +828,10 @@ pub fn pick_compare(mut ws: State<Workspace>) {
     if ws.peek().active().is_none() {
         return;
     }
-    spawn(async move {
-        let picked = rfd::AsyncFileDialog::new()
-            .set_title("Comparar con…")
-            .add_filter("sismo", &["sismo"])
-            .pick_file()
-            .await;
-        let Some(file) = picked else { return };
-        let path = file.path().to_path_buf();
+    spawn_in_window(async move {
+        let Some(path) = super::platform::pick_recording("Comparar con…".into()).await else {
+            return;
+        };
         match sismo_analysis::Session::load(&path) {
             Ok((session, _)) => {
                 if let Some(v) = ws.write().active_mut() {
