@@ -33,6 +33,10 @@ use freya::prelude::*;
 use crate::client::{Discovered, Scanner};
 use crate::workspace::{Recent, Saved, SessionView, Tab};
 
+/// Recording to diff the opened file against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompareWith(pub PathBuf);
+
 /// Modal surfaces; at most one is open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
@@ -257,6 +261,7 @@ fn handle_shortcut(mut ws: State<Workspace>, event: &KeyboardEventData) {
                 });
             }
             "o" => dialogs::pick_file(ws),
+            "d" => dialogs::pick_compare(ws),
             "r" => dialogs::toggle_record(ws),
             "e" if ws.peek().active.is_some() => {
                 ws.write().dialog = Some(Dialog::Export);
@@ -314,8 +319,20 @@ fn app() -> impl IntoElement {
     let file = use_try_consume::<Option<PathBuf>>().flatten();
     let live = use_try_consume::<Option<SocketAddr>>().flatten();
     let tab = use_try_consume::<Tab>();
+    let compare = use_try_consume::<Option<CompareWith>>().flatten();
     let mut ws = use_state(move || {
         let mut workspace = Workspace::new(file, live);
+        if let (Some(CompareWith(path)), Some(view)) = (compare, workspace.active_mut()) {
+            match sismo_analysis::Session::load(&path) {
+                Ok((other, _)) => {
+                    view.compare = Some((path, Box::new(other)));
+                    view.tab = Tab::Functions;
+                }
+                Err(error) => {
+                    workspace.notify("No se pudo comparar", error.to_string(), None, true);
+                }
+            }
+        }
         if let (Some(tab), Some(view)) = (tab, workspace.active_mut()) {
             view.tab = tab;
         }
@@ -359,7 +376,7 @@ fn app() -> impl IntoElement {
 }
 
 /// Opens the viewer window; blocks until it closes.
-pub fn run(file: Option<PathBuf>, live: Option<SocketAddr>) {
+pub fn run(file: Option<PathBuf>, live: Option<SocketAddr>, compare: Option<CompareWith>) {
     use theme::{
         MONO, MONO_MEDIUM, MONO_REGULAR, MONO_SEMIBOLD, SANS, SANS_REGULAR, SANS_SEMIBOLD,
     };
@@ -379,7 +396,8 @@ pub fn run(file: Option<PathBuf>, live: Option<SocketAddr>) {
                     .with_app_id("dev.sismo.viewer")
                     .with_background((0x16, 0x16, 0x15))
                     .with_root_context(file)
-                    .with_root_context(live),
+                    .with_root_context(live)
+                    .with_root_context(compare),
             ),
     );
 }
@@ -408,11 +426,14 @@ mod snapshots {
         };
         for tab in tabs {
             let file = file.clone();
+            let compare = std::env::var_os("SISMO_SNAPSHOT_COMPARE")
+                .map(|p| super::CompareWith(PathBuf::from(p)));
             let (mut runner, ()) = TestingRunner::new(
                 super::app,
                 (1440., 900.).into(),
                 move |r| {
                     r.provide_root_context(move || file.clone());
+                    r.provide_root_context(move || compare.clone());
                     if let Some(tab) = tab {
                         r.provide_root_context(move || tab);
                     }

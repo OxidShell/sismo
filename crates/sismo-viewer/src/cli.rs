@@ -27,7 +27,12 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Open the viewer on a recording.
-    Open { file: PathBuf },
+    Open {
+        file: PathBuf,
+        /// Diff it against this recording (shown in Funciones).
+        #[arg(long)]
+        compare: Option<PathBuf>,
+    },
     /// Open the viewer connected to a live app (`ip:port` or app name).
     Connect { target: String },
     /// Overview: frames, time split, top functions, slow frames, problems.
@@ -71,6 +76,20 @@ pub enum Command {
         /// Drop structured log fields (may carry user data).
         #[arg(long)]
         strip_fields: bool,
+    },
+    /// Function-by-function diff between two recordings (B relative to A).
+    Compare {
+        a: PathBuf,
+        b: PathBuf,
+        /// p95, p50, self or calls.
+        #[arg(long, default_value = "p95")]
+        metric: String,
+        #[arg(long, short = 'q', default_value = "")]
+        query: String,
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
     },
     /// List apps streaming sismo on the LAN.
     Scan {
@@ -173,6 +192,14 @@ pub fn run(command: Command) -> Result<(), CliError> {
             no_logs,
             strip_fields,
         } => export(&file, &format, output, !no_logs, strip_fields),
+        Command::Compare {
+            a,
+            b,
+            metric,
+            query,
+            limit,
+            json,
+        } => compare(&a, &b, &metric, &query, limit, json),
         Command::Scan { timeout } => scan(&timeout),
         Command::Record {
             live,
@@ -549,4 +576,71 @@ fn truncate(text: &str, width: usize) -> String {
         .rev()
         .collect();
     format!("…{tail}")
+}
+
+fn compare(
+    a: &std::path::Path,
+    b: &std::path::Path,
+    metric: &str,
+    query: &str,
+    limit: usize,
+    json: bool,
+) -> Result<(), CliError> {
+    let metric = sismo_analysis::Metric::parse(metric).ok_or_else(|| CliError::Unknown {
+        what: "metric",
+        value: metric.to_owned(),
+    })?;
+    let query = Query::parse(query)?;
+    let (left, _) = Session::load(a)?;
+    let (right, _) = Session::load(b)?;
+    let mut rows = sismo_analysis::compare(&left, &right, &query, metric);
+    rows.truncate(limit);
+    if json {
+        return print_json(&rows);
+    }
+    let show = |v: Option<u64>| match (v, metric) {
+        (None, _) => "—".to_owned(),
+        (Some(v), sismo_analysis::Metric::Calls) => v.to_string(),
+        (Some(v), _) => Nanos(v).to_string(),
+    };
+    println!(
+        "A {}  ·  B {}  ·  {}",
+        a.display(),
+        b.display(),
+        metric.label()
+    );
+    println!(
+        "{:<56} {:>11} {:>11} {:>11} {:>8}",
+        "function", "A", "B", "Δ", "Δ %"
+    );
+    for row in rows {
+        let delta = match (row.delta, metric) {
+            (None, _) => {
+                if row.a.is_none() {
+                    "new".to_owned()
+                } else {
+                    "gone".to_owned()
+                }
+            }
+            (Some(d), sismo_analysis::Metric::Calls) => format!("{d:+}"),
+            (Some(d), _) => format!(
+                "{}{}",
+                if d < 0 { "-" } else { "+" },
+                Nanos(d.unsigned_abs())
+            ),
+        };
+        let percent = row
+            .percent
+            .map_or_else(String::new, |p| format!("{p:+.0}%"));
+        println!(
+            "{:<56} {:>11} {:>11} {:>11} {:>8}{}",
+            truncate(&row.name, 56),
+            show(row.a),
+            show(row.b),
+            delta,
+            percent,
+            if row.is_noise() { "  ~" } else { "" }
+        );
+    }
+    Ok(())
 }

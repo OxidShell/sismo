@@ -1,6 +1,7 @@
 //! Session model, query language, aggregations and exports for sismo
 //! recordings — shared by the viewer and the CLI.
 
+mod compare;
 pub mod export;
 mod groups;
 pub mod query;
@@ -8,6 +9,7 @@ mod session;
 mod stats;
 pub mod units;
 
+pub use compare::{CompareRow, Metric, compare};
 pub use export::{ExportOptions, Format, Summary, SummaryOptions};
 pub use groups::{Group, Groups, Rule};
 pub use query::{KEYS, Matcher, Query, QueryError, RangeSpec, SLOW_FRAME_NS, parse_duration};

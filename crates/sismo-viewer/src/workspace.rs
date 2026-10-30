@@ -158,6 +158,9 @@ pub struct SessionView {
     pub sort: sismo_analysis::SortBy,
     pub hidden_levels: BTreeSet<sismo_format::Level>,
     pub hidden_sources: Vec<sismo_format::Source>,
+    /// Recording to diff against (A), this session being B.
+    pub compare: Option<(PathBuf, Box<Session>)>,
+    pub compare_metric: sismo_analysis::Metric,
 }
 
 impl SessionView {
@@ -187,6 +190,8 @@ impl SessionView {
             sort: sismo_analysis::SortBy::SelfTime,
             hidden_levels: BTreeSet::new(),
             hidden_sources: Vec::new(),
+            compare: None,
+            compare_metric: sismo_analysis::Metric::P95,
         }
     }
 

@@ -541,7 +541,8 @@ impl Component for MarkerDialog {
 }
 
 /// Command palette entries: label, shortcut, action id.
-const ACTIONS: [(&str, &str, u8); 11] = [
+const ACTIONS: [(&str, &str, u8); 12] = [
+    ("Comparar con…", "Ctrl D", 11),
     ("Abrir archivo…", "Ctrl O", 0),
     ("Grabar / detener", "Ctrl R", 1),
     ("Exportar…", "Ctrl E", 2),
@@ -568,6 +569,7 @@ fn run_action(mut ws: State<Workspace>, id: u8) {
         }
         8 => ws.write().dialog = Some(Dialog::AppFilter),
         9 => ws.write().active = None,
+        11 => pick_compare(ws),
         _ => ws.write().dialog = Some(Dialog::Shortcuts),
     }
 }
@@ -696,6 +698,7 @@ fn shortcuts() -> Rect {
                 ("Marcador", "M"),
                 ("Pausar / reanudar", "Espacio"),
                 ("Exportar", "Ctrl E"),
+                ("Comparar con…", "Ctrl D"),
             ],
         ),
         (
@@ -824,4 +827,31 @@ pub fn toast(mut ws: State<Workspace>, toast: &Toast) -> Rect {
                     ws.write().toast = None;
                 })),
         )
+}
+
+/// Picks a recording to compare the active session against.
+pub fn pick_compare(mut ws: State<Workspace>) {
+    if ws.peek().active().is_none() {
+        return;
+    }
+    spawn(async move {
+        let picked = rfd::AsyncFileDialog::new()
+            .set_title("Comparar con…")
+            .add_filter("sismo", &["sismo"])
+            .pick_file()
+            .await;
+        let Some(file) = picked else { return };
+        let path = file.path().to_path_buf();
+        match sismo_analysis::Session::load(&path) {
+            Ok((session, _)) => {
+                if let Some(v) = ws.write().active_mut() {
+                    v.compare = Some((path, Box::new(session)));
+                    v.tab = Tab::Functions;
+                }
+            }
+            Err(error) => ws
+                .write()
+                .notify("No se pudo abrir", error.to_string(), None, true),
+        }
+    });
 }

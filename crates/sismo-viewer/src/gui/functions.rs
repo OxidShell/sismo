@@ -267,6 +267,9 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, row: &FunctionStats) -> 
 }
 
 pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
+    if let Some((path, other)) = &view.compare {
+        return compare_view(ws, view, path, other);
+    }
     let session = &view.session;
     let query = view.effective_query();
     let rows = session.functions(&query, view.window(), BUCKETS, view.sort);
@@ -384,4 +387,169 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
         )
         .maybe(detail_row.is_some(), |r| r.child(vline()))
         .maybe_child(detail_row.map(|row| detail(ws, view, &row)))
+}
+
+fn compare_view(
+    mut ws: State<Workspace>,
+    view: &SessionView,
+    path: &std::path::Path,
+    other: &sismo_analysis::Session,
+) -> Rect {
+    use sismo_analysis::Metric;
+    let metric = view.compare_metric;
+    let rows = sismo_analysis::compare(other, &view.session, &view.effective_query(), metric);
+    let show = move |v: Option<u64>| match (v, metric) {
+        (None, _) => "—".to_owned(),
+        (Some(v), Metric::Calls) => v.to_string(),
+        (Some(v), _) => Nanos(v).to_string(),
+    };
+    let max_percent = rows
+        .iter()
+        .filter_map(|r| r.percent)
+        .map(f64::abs)
+        .fold(1., f64::max)
+        .min(300.);
+    let metrics = [Metric::P95, Metric::P50, Metric::SelfTime, Metric::Calls];
+    let header = rect()
+        .width(Size::fill())
+        .horizontal()
+        .content(Content::flex())
+        .cross_align(Alignment::Center)
+        .padding((10., 16.))
+        .spacing(12.)
+        .background(theme::color(theme::BG1))
+        .child(
+            rect()
+                .width(Size::flex(1.))
+                .spacing(4.)
+                .child(mono(format!("A  {}", path.display()), 12., theme::TEXT))
+                .child(mono(format!("B  {}", view.title()), 12., theme::TEXT)),
+        )
+        .children(metrics.iter().map(|m| {
+            let m = *m;
+            let on = m == metric;
+            rect()
+                .padding((5., 12.))
+                .corner_radius(4.)
+                .background(theme::color(if on { theme::BG3 } else { theme::BG0 }))
+                .cursor(CursorIcon::Pointer)
+                .on_press(move |_| {
+                    if let Some(v) = ws.write().active_mut() {
+                        v.compare_metric = m;
+                    }
+                })
+                .child(text(
+                    m.label(),
+                    12.,
+                    if on { theme::TEXT } else { theme::TEXT2 },
+                ))
+                .into_element()
+        }))
+        .child(button("Quitar comparación", Kind::Secondary, move |_| {
+            if let Some(v) = ws.write().active_mut() {
+                v.compare = None;
+            }
+        }));
+    let count = rows.len();
+    let list = VirtualScrollView::new_with_data(
+        (rows, metric),
+        move |item, (rows, _): &(Vec<sismo_analysis::CompareRow>, Metric)| {
+            let Some(row) = rows.get(item.index) else {
+                return rect().into_element();
+            };
+            let worse = row.delta.is_some_and(|d| d > 0) && !row.is_noise();
+            let better = row.delta.is_some_and(|d| d < 0) && !row.is_noise();
+            let rgb = if worse {
+                theme::ERROR
+            } else if better {
+                theme::FRAMEWORK
+            } else {
+                theme::TEXT3
+            };
+            let delta = match row.delta {
+                None if row.a.is_none() => "nueva".to_owned(),
+                None => "ya no está".to_owned(),
+                Some(d) if metric == Metric::Calls => format!("{d:+}"),
+                Some(d) => format!(
+                    "{}{}",
+                    if d < 0 { "-" } else { "+" },
+                    Nanos(d.unsigned_abs())
+                ),
+            };
+            let percent = row
+                .percent
+                .map_or_else(String::new, |p| format!("{p:+.0}%"));
+            let bar = row
+                .percent
+                .map_or(0., |p| (p.abs() / max_percent * 300.).min(300.))
+                as f32;
+            rect()
+                .key(item.index)
+                .width(Size::fill())
+                .height(Size::px(ROW_H))
+                .horizontal()
+                .content(Content::flex())
+                .cross_align(Alignment::Center)
+                .padding((0., 16.))
+                .spacing(12.)
+                .child(swatch(theme::group(row.group), 6., 1.))
+                .child(mono(row.name.clone(), 12., theme::TEXT).width(Size::flex(1.)))
+                .child(
+                    rect()
+                        .width(Size::px(90.))
+                        .horizontal()
+                        .main_align(Alignment::End)
+                        .child(mono(show(row.a), 12., theme::TEXT2)),
+                )
+                .child(
+                    rect()
+                        .width(Size::px(90.))
+                        .horizontal()
+                        .main_align(Alignment::End)
+                        .child(mono(show(row.b), 12., theme::TEXT2)),
+                )
+                .child(
+                    rect()
+                        .width(Size::px(90.))
+                        .horizontal()
+                        .main_align(Alignment::End)
+                        .child(mono(delta, 12., rgb)),
+                )
+                .child(
+                    rect()
+                        .width(Size::px(60.))
+                        .horizontal()
+                        .main_align(Alignment::End)
+                        .child(mono(percent, 12., rgb)),
+                )
+                .child(
+                    rect()
+                        .width(Size::px(310.))
+                        .padding((0., 0., 0., 10.))
+                        .child(
+                            rect()
+                                .width(Size::px(bar.max(1.)))
+                                .height(Size::px(8.))
+                                .corner_radius(1.)
+                                .background(theme::color(rgb)),
+                        ),
+                )
+                .into_element()
+        },
+    )
+    .length(count)
+    .item_size(ROW_H)
+    .height(Size::flex(1.));
+    rect()
+        .expanded()
+        .content(Content::flex())
+        .child(header)
+        .child(hline())
+        .child(list)
+        .child(hline())
+        .child(rect().padding((8., 16.)).child(text(
+            format!("{count} funciones · rojo = peor en B · azul = mejor · gris = dentro del ruido (±10%) · ordenado por Δ absoluto"),
+            11.,
+            theme::TEXT3,
+        )))
 }
