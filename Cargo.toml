@@ -26,9 +26,15 @@ quote = "1"
 proc-macro2 = "1"
 zudp = { version = "0.3.8", default-features = false, features = ["security", "discovery"] }
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
+sismo-analysis = { path = "crates/sismo-analysis" }
+regex-lite = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+too_many_lines = "allow"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
