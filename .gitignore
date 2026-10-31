@@ -1,3 +1,7 @@
 /target
 *.sismo
 /demo-traces
+
+# Nix build outputs
+result
+result-*
