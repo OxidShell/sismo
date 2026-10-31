@@ -1,0 +1,334 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (v0.1.0). Empty → build every artifact from the selected ref without publishing."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  # Resolves what is being built and fans the desktop matrix out of
+  # nix/targets.nix (`nix run .#matrix`), so the workflow never lists
+  # platforms itself.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.r.outputs.ref }}
+      tag: ${{ steps.r.outputs.tag }}
+      version: ${{ steps.r.outputs.version }}
+      publish: ${{ steps.r.outputs.publish }}
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: r
+        name: Resolve ref
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          raw="${INPUT_TAG:-}"
+          if [ -z "$raw" ] && [ "$GITHUB_REF_TYPE" = tag ]; then raw="$GITHUB_REF_NAME"; fi
+          if [ -n "$raw" ]; then
+            tag="v${raw#v}"
+            {
+              echo "ref=refs/tags/$tag"
+              echo "tag=$tag"
+              echo "version=${tag#v}"
+              echo "publish=true"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "ref=$GITHUB_SHA"
+              echo "publish=false"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.r.outputs.ref }}
+
+      # The workspace shares one version (`[workspace.package]`).
+      - name: Verify Cargo.toml version matches tag
+        if: steps.r.outputs.publish == 'true'
+        run: |
+          crate=$(awk -F\" '/^version = /{print $2; exit}' Cargo.toml)
+          if [ "$crate" != "${{ steps.r.outputs.version }}" ]; then
+            echo "::error::Cargo.toml version ($crate) does not match tag (${{ steps.r.outputs.version }})"
+            exit 1
+          fi
+
+      - uses: ./.github/actions/setup-nix
+
+      - id: m
+        name: Generate matrix
+        run: |
+          matrix=$(nix run .#matrix --quiet)
+          echo "$matrix" | jq .
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  desktop:
+    name: Viewer (${{ matrix.system }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.matrix).nix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - id: nix
+        uses: ./.github/actions/setup-nix
+        with:
+          attic-token: ${{ secrets.ATTIC_TOKEN }}
+
+      # Pushed on its own first: a failure further down still leaves the
+      # dependency build in attic, so the retry starts from the app crate.
+      - name: Build dependencies
+        run: nix build -L .#cargoArtifacts -o result-deps
+
+      - name: Push dependencies to attic
+        if: always()
+        uses: ./.github/actions/attic-push
+        with:
+          push-enabled: ${{ steps.nix.outputs.push-enabled }}
+          paths: result-deps
+
+      # The wrapped package doubles as the "Nix" release format: once in
+      # attic, `nix run github:SergioRibera/sismo/<tag>` is a download.
+      - name: Build Nix package
+        run: nix build -L .#sismo -o result-app
+
+      - name: Build bundles
+        run: nix build -L .#bundles -o result-bundles
+
+      - id: flatpak
+        name: Build flatpak kit
+        run: |
+          if [ "$(nix eval --json '.#packages.${{ matrix.system }}' --apply 'p: p ? flatpak-kit')" = true ]; then
+            nix build -L .#flatpak-kit -o result-flatpak-kit
+            mkdir -p flatpak-kit && cp -rL result-flatpak-kit/. flatpak-kit/
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stage artifacts
+        run: bash .github/scripts/stage-bundles.sh result-bundles dist ${{ matrix.system }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.system }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+      - if: steps.flatpak.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-kit-${{ matrix.system }}
+          path: flatpak-kit/
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Push closures to attic
+        if: always()
+        uses: ./.github/actions/attic-push
+        with:
+          push-enabled: ${{ steps.nix.outputs.push-enabled }}
+          paths: result-deps result-app result-bundles result-flatpak-kit
+
+  # rust-skia ships no windows-gnu binaries, so the exe is built with MSVC
+  # here and only packaged by Nix (windows-bundle).
+  windows-build:
+    name: Windows build (${{ matrix.system }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.matrix).prebuilt }}
+    steps:
+      - run: git config --global core.longpaths true
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo build
+        run: cargo build --release --locked -p sismo-viewer --bin sismo
+
+      - name: Stage exe
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p win-dist
+          cp target/release/sismo.exe win-dist/
+          ls -la win-dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-${{ matrix.system }}
+          path: win-dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  windows-bundle:
+    name: Windows bundles (${{ matrix.system }})
+    needs: [plan, windows-build]
+    runs-on: ${{ matrix.bundleRunner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.matrix).prebuilt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - id: nix
+        uses: ./.github/actions/setup-nix
+        with:
+          attic-token: ${{ secrets.ATTIC_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: prebuilt-${{ matrix.system }}
+          path: win-dist
+
+      - name: Bundle NSIS / MSI / zip
+        run: SISMO_WINDOWS_DIST="$PWD/win-dist" nix build -L --impure .#windows-bundles -o result-bundles
+
+      - name: Stage artifacts
+        run: bash .github/scripts/stage-bundles.sh result-bundles dist ${{ matrix.system }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.system }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # nix-bundle-app emits a flatpak source kit; finishing it needs
+  # flatpak-builder with network access to the Flathub runtime.
+  flatpak:
+    name: Flatpak
+    needs: [plan, desktop]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak-kit-x86_64-linux
+          path: flatpak-kit
+
+      - name: Install flatpak-builder + runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+
+      - name: Build .flatpak
+        working-directory: flatpak-kit
+        run: |
+          chmod +x build.sh
+          ./build.sh
+          mkdir -p ../dist
+          for f in *.flatpak; do mv "$f" "../dist/${f%.flatpak}-x86_64.flatpak"; done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-flatpak
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [plan, desktop, windows-bundle, flatpak]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # Full history + tags: git-cliff needs the previous tag to cut the range.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "desktop-*"
+          path: dist
+          merge-multiple: true
+
+      # This release's section only (feat / fix / perf since the previous tag).
+      - name: Changelog for this release
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --current --strip header
+        env:
+          OUTPUT: CHANGES.md
+
+      - name: Full changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --strip header
+        env:
+          OUTPUT: dist/CHANGELOG.md
+
+      - name: SHA256SUMS
+        working-directory: dist
+        run: |
+          find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs sha256sum -- > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Release notes
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          {
+            cat CHANGES.md
+            cat <<EOF
+
+          ## Install the viewer
+
+          - **Linux**: AppImage, \`.deb\`, \`.rpm\`, \`.flatpak\` or \`.tar.gz\`.
+          - **Nix**: \`nix run github:SergioRibera/sismo/$TAG\` (binary cache: \`cache.sergioribera.rs/main\`).
+          - **macOS**: \`.dmg\`, \`.pkg\` or the zipped \`.app\` (unsigned: right-click → Open the first time).
+          - **Windows**: \`-setup.exe\` (NSIS) or \`.msi\`.
+          - **Cargo**: \`cargo install sismo-viewer\`.
+
+          The in-app crates (\`sismo\`, \`sismo-freya\`, …) are on crates.io.
+          EOF
+          } > NOTES.md
+          head -60 NOTES.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.plan.outputs.tag }}
+          name: sismo ${{ needs.plan.outputs.tag }}
+          prerelease: ${{ contains(needs.plan.outputs.tag, '-') }}
+          make_latest: ${{ !contains(needs.plan.outputs.tag, '-') }}
+          body_path: NOTES.md
+          fail_on_unmatched_files: true
+          files: dist/*

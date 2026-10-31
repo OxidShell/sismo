@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: fmt + clippy + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: System libraries for the viewer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfontconfig1-dev libfreetype6-dev libxcb1-dev \
+            libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev
+
+      - run: cargo fmt --all --check
+
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - run: cargo test --workspace --locked
+
+  # Same derivations the release builds, so a green CI run also warms
+  # attic for the next tag.
+  nix:
+    name: Viewer (x86_64-linux, Nix)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: nix
+        uses: ./.github/actions/setup-nix
+        with:
+          attic-token: ${{ secrets.ATTIC_TOKEN }}
+
+      - name: Build dependencies
+        run: nix build -L .#cargoArtifacts -o result-deps
+
+      - name: Push dependencies to attic
+        if: always()
+        uses: ./.github/actions/attic-push
+        with:
+          push-enabled: ${{ steps.nix.outputs.push-enabled }}
+          paths: result-deps
+
+      - name: Build viewer
+        run: nix build -L .#sismo -o result-app
+
+      - name: Push viewer to attic
+        if: always()
+        uses: ./.github/actions/attic-push
+        with:
+          push-enabled: ${{ steps.nix.outputs.push-enabled }}
+          paths: result-app
