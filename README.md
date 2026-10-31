@@ -1,5 +1,7 @@
 # sismo
 
+<img width="1896" height="1056" alt="Sismo Viewer" src="https://github.com/user-attachments/assets/59183f17-7204-4b25-acd3-aeb9c8d94770" />
+
 Remote and recorded performance + log analysis for Rust apps.
 
 Record per-function scopes, logs (`tracing`, `log`, stdout/stderr) and
@@ -90,6 +92,12 @@ and is remembered (persistently when `data_dir` is set). Viewers can change
 the app-side filter, add markers and pull the ring-buffer history.
 
 ## Viewer and CLI
+
+| Home | Timeline | Flamegraph |
+| --- | --- | --- |
+| <img width="1896" height="1056" alt="Sismo Viewer - Home" src="https://github.com/user-attachments/assets/fc9cc2e8-acde-4e85-9d2e-5d0432d965c1" /> | <img width="1896" height="1056" alt="Sismo Viewer - Timeline" src="https://github.com/user-attachments/assets/20a2b790-c9d4-4f66-a4ba-4a67f3681b8c" /> | <img width="1896" height="1056" alt="Sismo Viewer - Flamegraph" src="https://github.com/user-attachments/assets/a2d92a52-429c-455b-a332-dff118af18c9" /> |
+| Functions | Logs | Metrics |
+| <img width="1896" height="1056" alt="Sismo Viewer - Functions" src="https://github.com/user-attachments/assets/d5667a12-7cf2-49a8-ac71-8cba098e35d6" /> | <img width="1896" height="1056" alt="Sismo Viewer - Logs" src="https://github.com/user-attachments/assets/28fb6d22-a517-4af3-94b6-a83bf342d32e" /> | <img width="1896" height="1056" alt="Sismo Viewer - Metrics" src="https://github.com/user-attachments/assets/203700c1-b0fe-49aa-82a2-7320f1f992fe" /> |
 
 ```sh
 sismo                         # viewer: LAN apps + recent files
