@@ -112,6 +112,16 @@ fn records_spans_counters_logs_and_dumps() {
     assert!(events.iter().any(|e| matches!(e, Event::Log { message, fields, .. } if message == "disk almost full" && fields[0].0 == "free_mb")));
     assert!(events.iter().any(|e| matches!(e, Event::AsyncBegin { .. })));
     assert!(events.iter().any(|e| matches!(e, Event::AsyncEnd { .. })));
+    // Its poll is a plain span too, so it shows on the thread it ran on.
+    let async_cs = callsites
+        .iter()
+        .find(|c| c.name.ends_with("::async_work"))
+        .unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Begin { callsite, .. } if *callsite == async_cs.id))
+    );
     assert!(
         events
             .iter()

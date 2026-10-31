@@ -97,7 +97,13 @@ impl<F: Future> Future for Instrumented<F> {
                 record(|w, t| w.async_begin(t, callsite, id));
             }
         }
-        let poll = this.inner.as_mut().poll(cx);
+        // Each poll is also a plain span: that is the time the future really
+        // holds its thread, so work inside an executor tick (a UI framework
+        // polling its tasks) is attributed to the function that did it.
+        let poll = {
+            let _poll = ScopeGuard::enter(this.callsite);
+            this.inner.as_mut().poll(cx)
+        };
         if poll.is_ready() && this.id != 0 && !this.finished {
             this.finished = true;
             let id = this.id;
