@@ -6,7 +6,7 @@ use freya::prelude::*;
 use super::i18n::{self, tr};
 use super::prefs::Language;
 use super::theme;
-use super::widgets::{Kind, bordered, button, hline, kbd, mono, text, vline};
+use super::widgets::{Field, Kind, bordered, button, hline, kbd, mono, text, vline};
 use super::{Dialog, Workspace};
 
 /// Sections of the settings screen.
@@ -146,18 +146,7 @@ impl Component for RecordingSection {
                     .horizontal()
                     .spacing(8.)
                     .cross_align(Alignment::Center)
-                    .child(
-                        rect()
-                            .width(Size::px(380.))
-                            .height(Size::px(30.))
-                            .corner_radius(4.)
-                            .background(theme::color(theme::BG0))
-                            .border(bordered(theme::LINE2))
-                            .center()
-                            .font_family(theme::MONO)
-                            .font_size(12.)
-                            .child(Input::new(dir).flat().width(Size::px(374.))),
-                    )
+                    .child(Field::new(dir).width(Size::px(380.)))
                     .child(button(tr!("settings-save"), Kind::Secondary, move |_| {
                         let value = dir.peek().trim().to_owned();
                         let mut w = ws.write();

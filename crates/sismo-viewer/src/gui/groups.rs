@@ -10,7 +10,9 @@ use sismo_analysis::units::Percent;
 use super::Workspace;
 use super::i18n::tr;
 use super::theme;
-use super::widgets::{Kind, bordered, button, caption, hline, kbd, mono, panel, swatch, text};
+use super::widgets::{
+    Field, Kind, bordered, button, caption, hline, kbd, mono, panel, swatch, text,
+};
 
 fn segmented(current: Group, on_pick: impl FnMut(Group) + Clone + 'static) -> Element {
     rect()
@@ -194,21 +196,9 @@ impl Component for GroupsDialog {
                     .cross_align(Alignment::Center)
                     .spacing(10.)
                     .child(
-                        rect()
-                            .width(Size::flex(1.))
-                            .height(Size::px(30.))
-                            .corner_radius(4.)
-                            .background(theme::color(theme::BG0))
-                            .border(bordered(theme::LINE2))
-                            .center()
-                            .font_family(theme::MONO)
-                            .font_size(12.)
-                            .child(
-                                Input::new(pattern)
-                                    .flat()
-                                    .width(Size::fill())
-                                    .placeholder(tr!("groups-pattern-placeholder")),
-                            ),
+                        Field::new(pattern)
+                            .placeholder(tr!("groups-pattern-placeholder"))
+                            .width(Size::flex(1.)),
                     )
                     .child(segmented(*new_group.read(), move |g| new_group.set(g)))
                     .child(button(tr!("groups-add"), Kind::Secondary, move |_| {

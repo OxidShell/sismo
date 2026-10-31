@@ -192,3 +192,141 @@ pub mod layers {
     pub const MENU: u8 = 3;
     pub const TOAST: u8 = 4;
 }
+
+/// Strips the frame Freya's input paints on its own, so the field around
+/// it is the only box the user sees; otherwise focus draws a second
+/// border and fill inside the first one.
+pub trait InputExt {
+    fn chromeless(self) -> Self;
+}
+
+impl InputExt for Input {
+    fn chromeless(self) -> Self {
+        self.flat().theme_colors(InputColorsThemePartial {
+            focus_background: Some(Color::TRANSPARENT.into()),
+            focus_border_fill: Some(Color::TRANSPARENT.into()),
+            ..Default::default()
+        })
+    }
+}
+
+/// Single-line text field: one frame whose stroke follows focus, with a
+/// chromeless input inside. Mono 12px, framed, 30px tall by default.
+#[derive(PartialEq)]
+pub struct Field {
+    value: State<String>,
+    placeholder: Option<String>,
+    width: Size,
+    height: f32,
+    font_size: f32,
+    radius: f32,
+    sans: bool,
+    framed: bool,
+    auto_focus: bool,
+    on_submit: Option<EventHandler<String>>,
+}
+
+impl Field {
+    #[must_use]
+    pub fn new(value: State<String>) -> Self {
+        Self {
+            value,
+            placeholder: None,
+            width: Size::fill(),
+            height: 30.,
+            font_size: 12.,
+            radius: 4.,
+            sans: false,
+            framed: true,
+            auto_focus: false,
+            on_submit: None,
+        }
+    }
+
+    #[must_use]
+    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = Some(placeholder.into());
+        self
+    }
+
+    #[must_use]
+    pub fn width(mut self, width: impl Into<Size>) -> Self {
+        self.width = width.into();
+        self
+    }
+
+    #[must_use]
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = height;
+        self
+    }
+
+    #[must_use]
+    pub fn font_size(mut self, size: f32) -> Self {
+        self.font_size = size;
+        self
+    }
+
+    #[must_use]
+    pub fn corner_radius(mut self, radius: f32) -> Self {
+        self.radius = radius;
+        self
+    }
+
+    /// UI face instead of the data (mono) face.
+    #[must_use]
+    pub fn sans(mut self) -> Self {
+        self.sans = true;
+        self
+    }
+
+    /// No background or border: the surrounding panel is the frame.
+    #[must_use]
+    pub fn unframed(mut self) -> Self {
+        self.framed = false;
+        self
+    }
+
+    #[must_use]
+    pub fn auto_focus(mut self) -> Self {
+        self.auto_focus = true;
+        self
+    }
+
+    #[must_use]
+    pub fn on_submit(mut self, on_submit: impl Into<EventHandler<String>>) -> Self {
+        self.on_submit = Some(on_submit.into());
+        self
+    }
+}
+
+impl Component for Field {
+    fn render(&self) -> impl IntoElement {
+        let a11y = use_a11y();
+        let focus = use_focus(a11y);
+        let stroke = if focus().is_focused() {
+            theme::TEXT2
+        } else {
+            theme::LINE2
+        };
+        let input = Input::new(self.value)
+            .a11y_id(a11y)
+            .chromeless()
+            .auto_focus(self.auto_focus)
+            .width(Size::fill())
+            .map(self.placeholder.clone(), Input::placeholder)
+            .map(self.on_submit.clone(), Input::on_submit);
+        rect()
+            .width(self.width.clone())
+            .height(Size::px(self.height))
+            .corner_radius(self.radius)
+            .maybe(self.framed, |r| {
+                r.background(theme::color(theme::BG0))
+                    .border(border(stroke))
+            })
+            .center()
+            .font_family(if self.sans { theme::SANS } else { theme::MONO })
+            .font_size(self.font_size)
+            .child(input)
+    }
+}

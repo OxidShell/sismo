@@ -12,7 +12,7 @@ use sismo_analysis::{ExportOptions, Format};
 use super::i18n::tr;
 use super::theme;
 use super::widgets::{
-    Kind, bordered, button, caption, hline, kbd, layers, mono, panel, scrim, text,
+    Field, Kind, bordered, button, caption, hline, kbd, layers, mono, panel, scrim, text,
 };
 use super::{Dialog, Toast, Workspace};
 use crate::client::Command;
@@ -108,23 +108,12 @@ fn option_row(
         .into_element()
 }
 
-fn field(value: State<String>, placeholder: String, width: f32) -> Rect {
-    rect()
+fn field(value: State<String>, placeholder: String, width: f32) -> Field {
+    Field::new(value)
+        .placeholder(placeholder)
         .width(Size::px(width))
-        .height(Size::px(32.))
-        .corner_radius(4.)
-        .background(theme::color(theme::BG0))
-        .border(bordered(theme::LINE2))
-        .center()
-        .font_family(theme::MONO)
-        .font_size(12.)
-        .child(
-            Input::new(value)
-                .flat()
-                .auto_focus(true)
-                .width(Size::px(width - 4.))
-                .placeholder(placeholder),
-        )
+        .height(32.)
+        .auto_focus()
 }
 
 fn title_row(title: &str) -> Rect {
@@ -179,23 +168,13 @@ impl Component for PairDialog {
             .child(title_row(&tr!("dialog-pair-title", app = app)))
             .child(text(tr!("dialog-pair-body"), 12., theme::TEXT2).max_lines(3))
             .child(
-                rect()
-                    .width(Size::fill())
-                    .height(Size::px(44.))
-                    .corner_radius(6.)
-                    .background(theme::color(theme::BG0))
-                    .border(bordered(theme::TEXT2))
-                    .center()
-                    .font_family(theme::MONO)
+                Field::new(code)
+                    .placeholder("000000")
+                    .height(44.)
                     .font_size(22.)
-                    .child(
-                        Input::new(code)
-                            .flat()
-                            .auto_focus(true)
-                            .width(Size::px(360.))
-                            .placeholder("000000")
-                            .on_submit(move |_| submit()),
-                    ),
+                    .corner_radius(6.)
+                    .auto_focus()
+                    .on_submit(move |_| submit()),
             )
             .maybe_child(rejected.map(|r| text(r, 12., theme::ERROR)))
             .child(text(tr!("dialog-pair-remembered"), 11., theme::TEXT3))
@@ -553,21 +532,13 @@ impl Component for MarkerDialog {
             .spacing(12.)
             .child(title_row(&tr!("dialog-marker-title")))
             .child(
-                rect()
-                    .width(Size::fill())
-                    .height(Size::px(32.))
-                    .corner_radius(4.)
-                    .background(theme::color(theme::BG0))
-                    .border(bordered(theme::TEXT2))
-                    .center()
-                    .child(
-                        Input::new(note)
-                            .flat()
-                            .auto_focus(true)
-                            .width(Size::px(330.))
-                            .placeholder(tr!("dialog-marker-placeholder"))
-                            .on_submit(move |_| save()),
-                    ),
+                Field::new(note)
+                    .placeholder(tr!("dialog-marker-placeholder"))
+                    .height(32.)
+                    .font_size(13.)
+                    .sans()
+                    .auto_focus()
+                    .on_submit(move |_| save()),
             )
             .child(text(tr!("dialog-marker-body"), 11., theme::TEXT3))
             .child(footer(vec![
@@ -820,23 +791,18 @@ impl Component for PaletteDialog {
             .padding(8.)
             .spacing(4.)
             .child(
-                rect()
-                    .width(Size::fill())
-                    .height(Size::px(40.))
-                    .center()
+                Field::new(query)
+                    .placeholder(tr!("palette-placeholder"))
+                    .height(40.)
                     .font_size(15.)
-                    .child(
-                        Input::new(query)
-                            .flat()
-                            .auto_focus(true)
-                            .width(Size::px(580.))
-                            .placeholder(tr!("palette-placeholder"))
-                            .on_submit(move |_| {
-                                if let Some(id) = first {
-                                    run_action(ws, id);
-                                }
-                            }),
-                    ),
+                    .sans()
+                    .unframed()
+                    .auto_focus()
+                    .on_submit(move |_| {
+                        if let Some(id) = first {
+                            run_action(ws, id);
+                        }
+                    }),
             )
             .child(hline())
             .maybe(!actions.is_empty(), |r| {

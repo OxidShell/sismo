@@ -7,7 +7,7 @@ use sismo_format::{Level, Source};
 use super::Workspace;
 use super::i18n::tr;
 use super::theme;
-use super::widgets::{bordered, caption, mono, swatch, text};
+use super::widgets::{InputExt, bordered, caption, mono, swatch, text};
 
 /// One suggestion row: what to insert and how to describe it.
 #[derive(Debug, Clone, PartialEq)]
@@ -250,7 +250,7 @@ impl Component for QueryBar {
             commit(v);
         }))
         .a11y_id(a11y)
-        .flat()
+        .chromeless()
         .width(Size::px(if has_text { 528. } else { 558. }))
         .placeholder(tr!("query-placeholder"))
         .on_pre_key_down(move |e: Event<KeyboardEventData>| match &e.key {
