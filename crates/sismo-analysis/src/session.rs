@@ -201,6 +201,7 @@ pub struct Panic {
     pub thread: u32,
     pub message: String,
     pub location: String,
+    pub backtrace: String,
 }
 
 /// Summary of loading a recording.
@@ -400,12 +401,26 @@ impl Session {
                 t,
                 message,
                 location,
-            } => self.panics.push(Panic {
-                t,
-                thread,
-                message,
-                location,
-            }),
+                backtrace,
+            } => {
+                // Also a log line, so it reads in context with what led to it.
+                self.logs.push(LogEntry {
+                    t,
+                    thread,
+                    callsite: 0,
+                    level: Level::Panic,
+                    source: Source::Sismo,
+                    message: message.clone(),
+                    fields: vec![("location".to_owned(), location.clone())],
+                });
+                self.panics.push(Panic {
+                    t,
+                    thread,
+                    message,
+                    location,
+                    backtrace,
+                });
+            }
             Event::Alloc { bytes, count, .. } => {
                 self.threads[slot].pending_alloc = Some((bytes, count));
                 self.allocations = true;
@@ -482,6 +497,17 @@ impl Session {
     #[must_use]
     pub fn thread_name(&self, id: u32) -> &str {
         self.thread(id).map_or("?", |t| t.name.as_str())
+    }
+
+    /// The panic a [`Level::Panic`] log line stands for.
+    #[must_use]
+    pub fn panic_of(&self, log: &LogEntry) -> Option<&Panic> {
+        if log.level != Level::Panic {
+            return None;
+        }
+        self.panics
+            .iter()
+            .find(|p| p.t == log.t && p.thread == log.thread)
     }
 
     /// The thread whose frame marks define [`Session::frames`].

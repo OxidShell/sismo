@@ -29,13 +29,25 @@ const MAX_PAIR_LOCKOUT: Duration = Duration::from_mins(15);
 /// Piece size for on-device recording uploads.
 const UPLOAD_PIECE: usize = 192 * 1024;
 
+type FlushRequest = std::sync::mpsc::SyncSender<()>;
+
 pub(crate) struct NetHandle {
     pairing_code: String,
+    flush: mpsc::UnboundedSender<FlushRequest>,
 }
 
 impl NetHandle {
     pub fn pairing_code(&self) -> &str {
         &self.pairing_code
+    }
+
+    /// Waits, up to `timeout`, until every chunk handed to the network so
+    /// far went out to the viewers.
+    pub fn flush(&self, timeout: Duration) {
+        let (reply, done) = std::sync::mpsc::sync_channel(1);
+        if self.flush.send(reply).is_ok() {
+            let _ = done.recv_timeout(timeout);
+        }
     }
 }
 
@@ -281,6 +293,17 @@ impl Server {
                     .await;
             }
             ToRecorder::Bye => self.forget(from),
+            ToRecorder::FetchCrashReport { name } => {
+                if self.authorized(from) {
+                    self.upload_crash_report(from, &name).await;
+                }
+            }
+            ToRecorder::DeleteCrashReport { name } => {
+                if self.authorized(from) {
+                    let _ = self.handle.delete_crash_report(&name);
+                    self.send_crash_reports(from).await;
+                }
+            }
         }
     }
 
@@ -394,6 +417,32 @@ impl Server {
         if let Some(viewer) = self.viewers.get_mut(&from) {
             viewer.subscribed = true;
             viewer.last_seq = last_seq;
+        }
+        self.send_crash_reports(from).await;
+    }
+
+    async fn send_crash_reports(&self, to: SocketAddr) {
+        let reports = self.handle.crash_reports().iter().map(Into::into).collect();
+        self.send(to, stream::CONTROL, &ToViewer::CrashReports { reports })
+            .await;
+    }
+
+    async fn upload_crash_report(&self, to: SocketAddr, name: &str) {
+        let Some(dir) = self.handle.dump_dir() else {
+            return;
+        };
+        let Ok(bytes) = crate::crash::report_path(dir, name).and_then(std::fs::read) else {
+            return;
+        };
+        let total = bytes.len() as u64;
+        for (index, piece) in bytes.chunks(UPLOAD_PIECE).enumerate() {
+            let message = ToViewer::CrashReportPiece {
+                name: name.to_owned(),
+                offset: (index * UPLOAD_PIECE) as u64,
+                total,
+                bytes: piece.to_vec(),
+            };
+            self.send(to, stream::BULK, &message).await;
         }
     }
 
@@ -530,9 +579,14 @@ fn pairing_code() -> String {
 /// Starts the network thread: advertises on the LAN and serves viewers.
 pub(crate) fn start(config: &LiveConfig, handle: &Handle) -> io::Result<NetHandle> {
     let code = pairing_code();
-    let identity = Identity::load(config.data_dir.as_deref());
+    let data_dir = config
+        .data_dir
+        .clone()
+        .or_else(crate::config::default_data_dir);
+    let identity = Identity::load(data_dir.as_deref());
     let fingerprint = hex(&identity.keypair.public[..8]);
     let (feed_tx, mut feed_rx) = mpsc::channel::<(u64, Arc<Chunk>)>(512);
+    let (flush_tx, mut flush_rx) = mpsc::unbounded_channel::<FlushRequest>();
     handle.add_sink(Box::new(NetSink { feed: feed_tx }));
     let device = Arc::new(Mutex::new(DeviceRecording::default()));
     handle.add_sink(Box::new(DeviceSink {
@@ -541,7 +595,7 @@ pub(crate) fn start(config: &LiveConfig, handle: &Handle) -> io::Result<NetHandl
 
     let port = config.port;
     let auth = config.auth;
-    let device_dir = config.data_dir.clone().unwrap_or_else(std::env::temp_dir);
+    let device_dir = data_dir.unwrap_or_else(std::env::temp_dir);
     let handle = handle.clone();
     let code_for_task = code.clone();
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -631,6 +685,13 @@ pub(crate) fn start(config: &LiveConfig, handle: &Handle) -> io::Result<NetHandl
                             let Some((seq, chunk)) = feed else { return };
                             server.forward(seq, &chunk).await;
                         }
+                        request = flush_rx.recv() => {
+                            let Some(reply) = request else { return };
+                            while let Ok((seq, chunk)) = feed_rx.try_recv() {
+                                server.forward(seq, &chunk).await;
+                            }
+                            let _ = reply.send(());
+                        }
                         event = peers.recv() => {
                             let Ok(event) = event else { return };
                             server.on_peer(&event);
@@ -643,7 +704,10 @@ pub(crate) fn start(config: &LiveConfig, handle: &Handle) -> io::Result<NetHandl
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .map_err(|_| io::Error::other("network thread did not start"))??;
-    Ok(NetHandle { pairing_code: code })
+    Ok(NetHandle {
+        pairing_code: code,
+        flush: flush_tx,
+    })
 }
 
 #[cfg_attr(not(feature = "log"), allow(unused_variables))]

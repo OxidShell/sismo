@@ -118,6 +118,14 @@ pub enum ToRecorder {
         nonce: u64,
     },
     Bye,
+    /// Send the crash report `name` (one of [`ToViewer::CrashReports`]).
+    FetchCrashReport {
+        name: String,
+    },
+    /// Delete the crash report `name` from the device.
+    DeleteCrashReport {
+        name: String,
+    },
 }
 
 /// Messages a recorder sends to a viewer.
@@ -152,6 +160,28 @@ pub enum ToViewer {
     Pong {
         nonce: u64,
     },
+    /// Crash reports kept on the device: flight recorder dumps written
+    /// when the app panicked, this run or an earlier one.
+    CrashReports {
+        reports: Vec<CrashReport>,
+    },
+    /// Piece of a crash report the viewer fetched.
+    CrashReportPiece {
+        name: String,
+        offset: u64,
+        total: u64,
+        bytes: Vec<u8>,
+    },
+}
+
+/// A crash report held by a recorder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrashReport {
+    /// File name, unique on the device.
+    pub name: String,
+    pub bytes: u64,
+    /// When it was written, in nanoseconds since the Unix epoch.
+    pub written_unix_ns: u64,
 }
 
 mod tag {
@@ -164,6 +194,8 @@ mod tag {
     pub const STOP_DEVICE: u8 = 7;
     pub const PING: u8 = 8;
     pub const BYE: u8 = 9;
+    pub const FETCH_CRASH: u8 = 10;
+    pub const DELETE_CRASH: u8 = 11;
 
     pub const WELCOME: u8 = 1;
     pub const PAIRED: u8 = 2;
@@ -173,6 +205,8 @@ mod tag {
     pub const FILTER: u8 = 6;
     pub const DEVICE_RECORDING: u8 = 7;
     pub const PONG: u8 = 8;
+    pub const CRASH_REPORTS: u8 = 9;
+    pub const CRASH_PIECE: u8 = 10;
 }
 
 impl ToRecorder {
@@ -191,6 +225,8 @@ impl ToRecorder {
             ToRecorder::StopDeviceRecording => enc.u8(tag::STOP_DEVICE),
             ToRecorder::Ping { nonce } => enc.u8(tag::PING).uvar(*nonce),
             ToRecorder::Bye => enc.u8(tag::BYE),
+            ToRecorder::FetchCrashReport { name } => enc.u8(tag::FETCH_CRASH).str(name),
+            ToRecorder::DeleteCrashReport { name } => enc.u8(tag::DELETE_CRASH).str(name),
         };
         enc.into_inner()
     }
@@ -220,6 +256,12 @@ impl ToRecorder {
             tag::STOP_DEVICE => ToRecorder::StopDeviceRecording,
             tag::PING => ToRecorder::Ping { nonce: dec.uvar()? },
             tag::BYE => ToRecorder::Bye,
+            tag::FETCH_CRASH => ToRecorder::FetchCrashReport {
+                name: dec.string()?,
+            },
+            tag::DELETE_CRASH => ToRecorder::DeleteCrashReport {
+                name: dec.string()?,
+            },
             other => {
                 return Err(DecodeError::InvalidTag {
                     what: "recorder message",
@@ -273,6 +315,26 @@ impl ToViewer {
             ToViewer::Pong { nonce } => {
                 enc.u8(tag::PONG).uvar(*nonce);
             }
+            ToViewer::CrashReports { reports } => {
+                enc.u8(tag::CRASH_REPORTS).uvar(reports.len() as u64);
+                for report in reports {
+                    enc.str(&report.name)
+                        .uvar(report.bytes)
+                        .uvar(report.written_unix_ns);
+                }
+            }
+            ToViewer::CrashReportPiece {
+                name,
+                offset,
+                total,
+                bytes,
+            } => {
+                enc.u8(tag::CRASH_PIECE)
+                    .str(name)
+                    .uvar(*offset)
+                    .uvar(*total)
+                    .bytes(bytes);
+            }
         }
         enc.into_inner()
     }
@@ -314,6 +376,25 @@ impl ToViewer {
                 bytes: dec.bytes()?.to_vec(),
             },
             tag::PONG => ToViewer::Pong { nonce: dec.uvar()? },
+            tag::CRASH_REPORTS => {
+                let count = dec.uvar()?;
+                let reports = (0..count)
+                    .map(|_| {
+                        Ok(CrashReport {
+                            name: dec.string()?,
+                            bytes: dec.uvar()?,
+                            written_unix_ns: dec.uvar()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DecodeError>>()?;
+                ToViewer::CrashReports { reports }
+            }
+            tag::CRASH_PIECE => ToViewer::CrashReportPiece {
+                name: dec.string()?,
+                offset: dec.uvar()?,
+                total: dec.uvar()?,
+                bytes: dec.bytes()?.to_vec(),
+            },
             other => {
                 return Err(DecodeError::InvalidTag {
                     what: "viewer message",
@@ -360,6 +441,12 @@ mod tests {
             },
             ToRecorder::Ping { nonce: 3 },
             ToRecorder::Bye,
+            ToRecorder::FetchCrashReport {
+                name: "a-panic.sismo".into(),
+            },
+            ToRecorder::DeleteCrashReport {
+                name: "a-panic.sismo".into(),
+            },
         ] {
             assert_eq!(ToRecorder::decode(&msg.encode()).unwrap(), msg);
         }
@@ -380,6 +467,19 @@ mod tests {
                 bytes: vec![4],
             },
             ToViewer::Pong { nonce: 9 },
+            ToViewer::CrashReports {
+                reports: vec![CrashReport {
+                    name: "a-panic.sismo".into(),
+                    bytes: 12,
+                    written_unix_ns: 34,
+                }],
+            },
+            ToViewer::CrashReportPiece {
+                name: "a-panic.sismo".into(),
+                offset: 0,
+                total: 1,
+                bytes: vec![5],
+            },
         ] {
             assert_eq!(ToViewer::decode(&msg.encode()).unwrap(), msg);
         }

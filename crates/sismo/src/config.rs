@@ -14,7 +14,8 @@ pub struct RecordConfig {
 #[derive(Debug, Clone)]
 pub struct FlightConfig {
     pub capacity_bytes: usize,
-    /// Where panic dumps and [`crate::Handle::dump_flight_recorder`] write.
+    /// Where crash reports and [`crate::Handle::dump_flight_recorder`] write;
+    /// with the `istmo` feature it defaults to the app's state directory.
     pub dump_dir: Option<PathBuf>,
 }
 
@@ -24,8 +25,9 @@ pub struct FlightConfig {
 pub struct LiveConfig {
     pub port: u16,
     pub auth: sismo_format::net::AuthMode,
-    /// Directory for the persistent key and trusted viewers; keys are
-    /// ephemeral when unset.
+    /// Directory for the persistent key and trusted viewers; with the
+    /// `istmo` feature it defaults to the app's config directory, without
+    /// it keys are ephemeral when unset.
     pub data_dir: Option<PathBuf>,
 }
 
@@ -224,4 +226,31 @@ impl Config {
         let live = false;
         live || self.record.is_some() || self.flight.is_some()
     }
+}
+
+/// Default dump directory when none is set: the app's state directory
+/// for this OS (`istmo` feature), or none.
+#[cfg_attr(
+    feature = "istmo",
+    expect(clippy::unnecessary_wraps, reason = "none without the istmo feature")
+)]
+pub(crate) fn default_dump_dir() -> Option<PathBuf> {
+    #[cfg(feature = "istmo")]
+    return Some(istmo_core::path::state_dir().join("sismo"));
+    #[cfg(not(feature = "istmo"))]
+    None
+}
+
+/// Default directory for the recorder's key and trusted viewers: the app's
+/// config directory for this OS (`istmo` feature), or none.
+#[cfg(feature = "net")]
+#[cfg_attr(
+    feature = "istmo",
+    expect(clippy::unnecessary_wraps, reason = "none without the istmo feature")
+)]
+pub(crate) fn default_data_dir() -> Option<PathBuf> {
+    #[cfg(feature = "istmo")]
+    return Some(istmo_core::path::config_dir().join("sismo"));
+    #[cfg(not(feature = "istmo"))]
+    None
 }

@@ -36,14 +36,14 @@ impl LevelFilter {
 
     #[must_use]
     pub fn allows(self, level: Level) -> bool {
-        level as u8 <= self as u8
+        self != LevelFilter::Off && level as u8 <= self as u8
     }
 }
 
 impl From<Level> for LevelFilter {
     fn from(level: Level) -> Self {
         match level {
-            Level::Error => LevelFilter::Error,
+            Level::Panic | Level::Error => LevelFilter::Error,
             Level::Warn => LevelFilter::Warn,
             Level::Info => LevelFilter::Info,
             Level::Debug => LevelFilter::Debug,

@@ -54,6 +54,9 @@ pub(super) fn render(s: &Summary) -> String {
                 p.thread,
                 p.message
             );
+            if !p.backtrace.is_empty() {
+                let _ = writeln!(out, "\n  ```text\n{}\n  ```", indent(&p.backtrace));
+            }
         }
         out.push('\n');
     }
@@ -123,4 +126,12 @@ pub(super) fn render(s: &Summary) -> String {
         }
     }
     out
+}
+
+/// Indents every line by two spaces, to nest a block under a list item.
+fn indent(text: &str) -> String {
+    text.lines()
+        .map(|line| format!("  {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }

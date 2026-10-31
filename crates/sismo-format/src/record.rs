@@ -3,6 +3,9 @@ use crate::{DecodeError, Decoder, Encoder};
 /// Severity of a log record, ordered from most to least severe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Level {
+    /// A panic: never written as a log record, viewers derive it from the
+    /// panic event so it lists among the logs.
+    Panic = 0,
     Error = 1,
     Warn = 2,
     Info = 3,
@@ -11,7 +14,8 @@ pub enum Level {
 }
 
 impl Level {
-    pub const ALL: [Level; 5] = [
+    pub const ALL: [Level; 6] = [
+        Level::Panic,
         Level::Error,
         Level::Warn,
         Level::Info,
@@ -22,6 +26,7 @@ impl Level {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Level::Panic => "panic",
             Level::Error => "error",
             Level::Warn => "warn",
             Level::Info => "info",
@@ -43,6 +48,7 @@ impl TryFrom<u8> for Level {
 
     fn try_from(value: u8) -> Result<Self, DecodeError> {
         match value {
+            0 => Ok(Level::Panic),
             1 => Ok(Level::Error),
             2 => Ok(Level::Warn),
             3 => Ok(Level::Info),
@@ -292,6 +298,8 @@ pub enum Event {
         t: u64,
         message: String,
         location: String,
+        /// Captured backtrace, as text; empty when none could be taken.
+        backtrace: String,
     },
     /// Heap allocations made while the innermost open span ran (children
     /// included); emitted right before that span's [`Event::End`].
@@ -492,6 +500,7 @@ fn decode_events(base: u64, body: &[u8]) -> Result<Vec<Event>, DecodeError> {
                 t,
                 message: dec.string()?,
                 location: dec.string()?,
+                backtrace: dec.string()?,
             },
             tag::ALLOC => Event::Alloc {
                 t,
@@ -592,8 +601,11 @@ impl BatchWriter {
         self.stamp(tag::DROPPED, t).uvar(count);
     }
 
-    pub fn panic(&mut self, t: u64, message: &str, location: &str) {
-        self.stamp(tag::PANIC, t).str(message).str(location);
+    pub fn panic(&mut self, t: u64, message: &str, location: &str, backtrace: &str) {
+        self.stamp(tag::PANIC, t)
+            .str(message)
+            .str(location)
+            .str(backtrace);
     }
 
     pub fn alloc(&mut self, t: u64, bytes: u64, count: u64) {
@@ -631,7 +643,8 @@ impl BatchWriter {
                 t,
                 message,
                 location,
-            } => self.panic(*t, message, location),
+                backtrace,
+            } => self.panic(*t, message, location, backtrace),
             Event::Alloc { t, bytes, count } => self.alloc(*t, *bytes, *count),
         }
     }
@@ -755,6 +768,7 @@ mod tests {
                         t: 903,
                         message: "boom".into(),
                         location: "src/main.rs:1".into(),
+                        backtrace: "0: main".into(),
                     },
                 ],
             },

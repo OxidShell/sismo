@@ -21,6 +21,7 @@
 
 mod collector;
 mod config;
+mod crash;
 mod device;
 mod handle;
 mod panic;
@@ -43,6 +44,7 @@ mod tracing_layer;
 #[cfg(feature = "net")]
 pub use config::LiveConfig;
 pub use config::{Config, DEFAULT_FLIGHT_BYTES, FlightConfig, RecordConfig};
+pub use crash::{CrashReport, crash_reports, delete_crash_report};
 pub use handle::{Handle, InstallError, handle, install};
 pub use registry::Callsite;
 pub use scope::{Instrumented, ScopeGuard};

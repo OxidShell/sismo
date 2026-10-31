@@ -73,6 +73,7 @@ pub struct PanicLine {
     pub thread: String,
     pub message: String,
     pub location: String,
+    pub backtrace: String,
 }
 
 /// Compact, stable overview of a recording for agents and reports.
@@ -145,6 +146,8 @@ impl Session {
         let mut problems = Vec::new();
         for log in logs_in {
             match log.level {
+                // Listed whole under `panics`.
+                Level::Panic => continue,
                 Level::Error => counts.error += 1,
                 Level::Warn => counts.warn += 1,
                 Level::Info => counts.info += 1,
@@ -208,6 +211,7 @@ impl Session {
                     thread: self.thread_name(p.thread).to_owned(),
                     message: p.message.clone(),
                     location: p.location.clone(),
+                    backtrace: p.backtrace.clone(),
                 })
                 .collect(),
         }

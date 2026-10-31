@@ -31,6 +31,13 @@ fn sync_tick(n: u64) {
     }
 }
 
+#[sismo::function]
+fn import_page(page: usize) {
+    let pages: Vec<u32> = vec![1, 2, 3];
+    log::info!(target: "demo::import", "importing page {page}");
+    std::hint::black_box(pages[page]);
+}
+
 fn spin(duration: Duration) {
     let start = Instant::now();
     while start.elapsed() < duration {
@@ -70,6 +77,21 @@ fn main() {
             }
         })
         .expect("spawn worker");
+
+    // `DEMO_PANIC=<seconds>`: a worker thread panics after that long, the
+    // way a crash report comes to be.
+    if let Some(after) = std::env::var("DEMO_PANIC")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+    {
+        std::thread::Builder::new()
+            .name("importer".into())
+            .spawn(move || {
+                std::thread::sleep(Duration::from_secs(after));
+                import_page(7);
+            })
+            .expect("spawn importer");
+    }
 
     let seconds: u64 = std::env::args()
         .nth(1)

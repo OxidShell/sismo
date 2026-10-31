@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use sismo_format::{Filter, FilterError, SessionInfo};
 
@@ -43,6 +43,10 @@ pub(crate) struct Shared {
     #[cfg(feature = "net")]
     pub net: OnceLock<crate::net::NetHandle>,
 }
+
+/// Shortest time between two crash reports.
+const DUMP_EVERY: Duration = Duration::from_secs(10);
+static LAST_DUMP: Mutex<Option<Instant>> = Mutex::new(None);
 
 static HANDLE: RwLock<Option<Handle>> = RwLock::new(None);
 /// Serializes [`install`] and [`Handle::shutdown`].
@@ -138,7 +142,10 @@ fn start(config: Config) -> Result<Handle, InstallError> {
         shared: Arc::new(Shared {
             sender,
             ring,
-            dump_dir: config.flight.as_ref().and_then(|f| f.dump_dir.clone()),
+            dump_dir: config
+                .flight
+                .as_ref()
+                .and_then(|f| f.dump_dir.clone().or_else(crate::config::default_dump_dir)),
             app: config.app.clone(),
             #[cfg(feature = "net")]
             net: OnceLock::new(),
@@ -218,6 +225,63 @@ impl Handle {
         let path = dir.join(format!("{stem}-{label}.sismo"));
         self.dump(&path)?;
         Ok(path)
+    }
+
+    /// Gets a panic just recorded to viewers and the dump directory: waits
+    /// for it to be written and sent, then dumps the flight recorder as a
+    /// crash report (at most one every [`DUMP_EVERY`], so a thread that
+    /// keeps panicking does not fill the disk).
+    pub(crate) fn report_panic(&self) {
+        self.flush_timeout(Duration::from_secs(2));
+        #[cfg(feature = "net")]
+        if let Some(net) = self.shared.net.get() {
+            net.flush(Duration::from_secs(1));
+        }
+        let Some(dir) = self.shared.dump_dir.as_deref() else {
+            return;
+        };
+        if self.ring().is_none() {
+            return;
+        }
+        {
+            let mut last = LAST_DUMP.lock().unwrap_or_else(PoisonError::into_inner);
+            if last.is_some_and(|t| t.elapsed() < DUMP_EVERY) {
+                return;
+            }
+            *last = Some(Instant::now());
+        }
+        // A failed dump must not mask the original panic.
+        if self.dump_flight_recorder("panic").is_ok() {
+            crate::crash::prune(dir);
+        }
+    }
+
+    /// Crash reports in the dump directory, newest first.
+    #[must_use]
+    pub fn crash_reports(&self) -> Vec<crate::CrashReport> {
+        self.shared
+            .dump_dir
+            .as_deref()
+            .map(crate::crash_reports)
+            .unwrap_or_default()
+    }
+
+    /// Deletes the crash report `name` from the dump directory.
+    ///
+    /// # Errors
+    /// No dump directory, `name` is not a crash report, or it cannot be
+    /// removed.
+    pub fn delete_crash_report(&self, name: &str) -> io::Result<()> {
+        let dir = self
+            .dump_dir()
+            .ok_or_else(|| io::Error::other("no dump directory configured"))?;
+        crate::delete_crash_report(dir, name)
+    }
+
+    /// Where crash reports and flight recorder dumps are written.
+    #[must_use]
+    pub fn dump_dir(&self) -> Option<&Path> {
+        self.shared.dump_dir.as_deref()
     }
 
     /// Bytes currently held by the flight recorder.
