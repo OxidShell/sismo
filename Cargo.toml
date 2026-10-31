@@ -37,11 +37,11 @@ freya-winit = "=0.5.0-rc.13"
 freya-core = "=0.5.0-rc.13"
 freya-engine = "=0.5.0-rc.13"
 freya-i18n = "=0.5.0-rc.13"
-istmo = "0.1.1-alpha.4"
-istmo-core = "0.1.1-alpha.4"
-istmo-file-picker = "0.1.1-alpha.4"
-istmo-opener = "0.1.1-alpha.4"
-istmo-plugins = "0.1.1-alpha.4"
+istmo = "0.1.1-alpha.5"
+istmo-core = "0.1.1-alpha.5"
+istmo-file-picker = "0.1.1-alpha.5"
+istmo-opener = "0.1.1-alpha.5"
+istmo-plugins = "0.1.1-alpha.5"
 bincode = { version = "2", features = ["derive", "std"] }
 
 [workspace.lints.clippy]
@@ -50,14 +50,6 @@ too_many_lines = "allow"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
-
-# System locale (istmo-plugins SystemInfo) is not published yet; take the
-# sibling istmo checkout so every istmo crate links one istmo-core.
-[patch.crates-io]
-istmo-core = { path = "../istmo/istmo/crates/core" }
-istmo-macros = { path = "../istmo/istmo/crates/macros" }
-istmo-build = { path = "../istmo/istmo/crates/build" }
-istmo-plugins = { path = "../istmo/istmo/crates/plugins" }
 
 # The viewer draws thousands of spans per frame; fully unoptimized it
 # stutters, so debug builds keep some optimization and all of it for deps.
