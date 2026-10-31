@@ -53,15 +53,23 @@ pub struct CompareWith(pub PathBuf);
 /// Modal surfaces; at most one is open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
-    Pair { code: String },
+    Pair {
+        code: String,
+    },
     Record,
     Export,
     AppFilter,
-    Palette { text: String },
+    Palette {
+        text: String,
+    },
     Shortcuts,
-    Marker { text: String },
+    Marker {
+        text: String,
+    },
     Groups,
     ClearSession,
+    /// The live app restarted: keep or drop what came from its last run.
+    AppRestarted,
 }
 
 /// Transient notice in the bottom-right corner.
@@ -342,6 +350,9 @@ impl Workspace {
                 Some(crate::workspace::LiveStatus::NeedsPairing { .. })
             );
             wants_pairing |= pairing && active_id == Some(session.id);
+        }
+        if self.dialog.is_none() && self.active().is_some_and(|v| v.next_run().is_some()) {
+            self.dialog = Some(Dialog::AppRestarted);
         }
         if wants_pairing && self.dialog.is_none() {
             self.dialog = Some(Dialog::Pair {
@@ -646,6 +657,51 @@ mod live_snapshot {
     use crate::workspace::Tab;
 
     /// Connects to `SISMO_SNAPSHOT_LIVE` (ip:port), streams for a few
+    /// Follows `SISMO_SNAPSHOT_LIVE` for `SISMO_SNAPSHOT_WAIT` seconds (restart
+    /// the app meanwhile) and renders what the viewer shows at the end.
+    #[test]
+    #[ignore = "needs a live app; run explicitly"]
+    fn render_live_wait() {
+        let Some(addr) = std::env::var("SISMO_SNAPSHOT_LIVE")
+            .ok()
+            .and_then(|a| a.parse::<SocketAddr>().ok())
+        else {
+            return;
+        };
+        let wait = std::env::var("SISMO_SNAPSHOT_WAIT")
+            .ok()
+            .and_then(|w| w.parse().ok())
+            .unwrap_or(20);
+        let dir =
+            std::env::var_os("SISMO_SNAPSHOT_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        let (mut runner, ()) = TestingRunner::new(
+            super::app,
+            (1440., 900.).into(),
+            move |r| {
+                r.provide_root_context(move || Some(addr));
+                r.provide_root_context(|| None::<PathBuf>);
+            },
+            1.,
+        );
+        for (name, bytes) in [
+            (theme::SANS, theme::SANS_REGULAR),
+            (theme::SANS, theme::SANS_SEMIBOLD),
+            (theme::MONO, theme::MONO_REGULAR),
+        ] {
+            Platform::get().load_font(name, Bytes::from_static(bytes));
+        }
+        runner.poll(Duration::from_millis(100), Duration::from_secs(wait));
+        runner.render_to_file(dir.join("sismo-live-wait.png"));
+        if let Ok(at) = std::env::var("SISMO_SNAPSHOT_CLICK")
+            && let Some((x, y)) = at.split_once(',')
+            && let (Ok(x), Ok(y)) = (x.parse::<f64>(), y.parse::<f64>())
+        {
+            runner.click_cursor((x, y));
+            runner.poll(Duration::from_millis(100), Duration::from_secs(3));
+            runner.render_to_file(dir.join("sismo-live-after-click.png"));
+        }
+    }
+
     /// seconds and renders the Timeline and Logs tabs.
     #[test]
     #[ignore = "needs a live app; run explicitly"]

@@ -189,6 +189,7 @@ functions-compare-footer = { $count } functions · red = worse in B · blue = be
 toast-saved = Saved
 toast-save-failed = Could not save
 toast-cleared = Cleared, showing what arrives from now on
+toast-run-kept = Previous run saved and opened in its own tab
 toast-clear-failed = Could not clear
 toast-record-failed = Could not record
 toast-exported = Exported
@@ -242,6 +243,11 @@ dialog-filter-body = Applied on the device: lowering the level lowers the cost, 
 dialog-filter-placeholder = info,my_app=trace,zudp=warn
 dialog-filter-levels = Levels per target
 dialog-filter-apply = Apply in the app
+dialog-restart-title = The app restarted
+dialog-restart-body = { $app } on { $device } started again, so this is a new session. What arrived from the previous one ({ $size }, { $duration }) is still here; the new one waits until you choose.
+dialog-restart-save-hint = "Save and continue" keeps the previous run in { $folder } and opens it in its own tab.
+dialog-restart-discard = Discard and continue
+dialog-restart-save = Save and continue
 dialog-clear-title = Clear this session?
 dialog-clear-body = Everything received from { $app } so far ({ $size }, { $duration }) leaves this viewer. The app stays connected and new data shows up from now on.
 dialog-clear-save-hint = "Save and clear" keeps a copy in { $folder }.

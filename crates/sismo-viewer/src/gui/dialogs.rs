@@ -627,12 +627,20 @@ impl Component for ClearDialog {
             .padding(20.)
             .spacing(12.)
             .child(title_row(&tr!("dialog-clear-title")))
-            .child(text(body, 12., theme::TEXT2))
-            .child(text(
-                tr!("dialog-clear-save-hint", folder = folder),
-                11.,
-                theme::TEXT3,
-            ))
+            .child(
+                text(body, 12., theme::TEXT2)
+                    .max_lines(6)
+                    .width(Size::fill()),
+            )
+            .child(
+                text(
+                    tr!("dialog-clear-save-hint", folder = folder),
+                    11.,
+                    theme::TEXT3,
+                )
+                .max_lines(3)
+                .width(Size::fill()),
+            )
             .child(footer(vec![
                 button(tr!("common-cancel"), Kind::Secondary, move |_| close(ws)).into_element(),
                 button(tr!("dialog-clear-discard"), Kind::Danger, move |_| {
@@ -641,6 +649,91 @@ impl Component for ClearDialog {
                 .into_element(),
                 button(tr!("dialog-clear-save"), Kind::Primary, move |_| {
                     clear_session(ws, true);
+                })
+                .into_element(),
+            ]))
+    }
+}
+
+/// Asks what to do with the current run when the live app restarted.
+#[derive(PartialEq)]
+struct RestartDialog(State<Workspace>);
+
+/// Moves the active live tab to the app's new run. With `save`, the run it
+/// showed is saved to the recordings folder first and opened in its own
+/// tab, so nothing disappears; the live tab stays the active one.
+fn follow_new_run(mut ws: State<Workspace>, save: bool) {
+    let mut w = ws.write();
+    w.dialog = None;
+    let Some(index) = w.active else { return };
+    let dir = w.prefs.recordings_dir();
+    let mut kept = None;
+    if save {
+        let view = &w.sessions[index];
+        let path = dir.join(format!("{}.sismo", view.file_stem()));
+        match std::fs::create_dir_all(&dir).and_then(|()| view.save_received(&path)) {
+            Ok(_) => kept = Some(path),
+            Err(error) => {
+                w.notify("toast-save-failed", error.to_string(), None, true);
+                return;
+            }
+        }
+    }
+    let recording = w.sessions[index].switch_to_next_run();
+    if let Some(done) = recording {
+        w.recording_saved(&done);
+    }
+    if let Some(path) = kept {
+        w.open_file(&path);
+        w.active = Some(index);
+        w.notify(
+            "toast-run-kept",
+            path.display().to_string(),
+            Some(path),
+            false,
+        );
+    }
+}
+
+impl Component for RestartDialog {
+    fn render(&self) -> impl IntoElement {
+        let ws = self.0;
+        let body = ws.read().active().map_or_else(String::new, |v| {
+            let (start, end) = v.session.span();
+            tr!(
+                "dialog-restart-body",
+                app = v.session.info.app.as_str(),
+                device = v.session.info.device.as_str(),
+                size = Bytes(v.live().map_or(0, |l| l.received_bytes)).to_string(),
+                duration = sismo_analysis::units::Nanos(end.saturating_sub(start)).to_string(),
+            )
+        });
+        let folder = ws.read().prefs.recordings_dir().display().to_string();
+        panel(480.)
+            .padding(20.)
+            .spacing(12.)
+            .child(title_row(&tr!("dialog-restart-title")))
+            .child(
+                text(body, 12., theme::TEXT2)
+                    .max_lines(6)
+                    .width(Size::fill()),
+            )
+            .child(
+                text(
+                    tr!("dialog-restart-save-hint", folder = folder),
+                    11.,
+                    theme::TEXT3,
+                )
+                .max_lines(3)
+                .width(Size::fill()),
+            )
+            .child(footer(vec![
+                button(tr!("dialog-restart-discard"), Kind::Danger, move |_| {
+                    follow_new_run(ws, false);
+                })
+                .into_element(),
+                button(tr!("dialog-restart-save"), Kind::Primary, move |_| {
+                    follow_new_run(ws, true);
                 })
                 .into_element(),
             ]))
@@ -883,6 +976,7 @@ pub fn render(ws: State<Workspace>, dialog: &Dialog) -> Rect {
         Dialog::Marker { .. } => MarkerDialog(ws).into_element(),
         Dialog::Groups => super::groups::GroupsDialog(ws).into_element(),
         Dialog::ClearSession => ClearDialog(ws).into_element(),
+        Dialog::AppRestarted => RestartDialog(ws).into_element(),
     };
     scrim(move |_| close(ws), content)
 }

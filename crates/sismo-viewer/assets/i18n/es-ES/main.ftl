@@ -189,6 +189,7 @@ functions-compare-footer = { $count } funciones · rojo = peor en B · azul = me
 toast-saved = Guardado
 toast-save-failed = No se pudo guardar
 toast-cleared = Limpio, se muestra lo que llegue desde ahora
+toast-run-kept = Ejecución anterior guardada y abierta en su propia pestaña
 toast-clear-failed = No se pudo limpiar
 toast-record-failed = No se pudo grabar
 toast-exported = Exportado
@@ -242,6 +243,11 @@ dialog-filter-body = Se aplica en el dispositivo: bajar el nivel baja el costo, 
 dialog-filter-placeholder = info,mi_app=trace,zudp=warn
 dialog-filter-levels = Niveles por target
 dialog-filter-apply = Aplicar en la app
+dialog-restart-title = La app se reinició
+dialog-restart-body = { $app } en { $device } arrancó de nuevo, así que es una sesión nueva. Lo recibido de la anterior ({ $size }, { $duration }) sigue acá; la nueva espera hasta que elijas.
+dialog-restart-save-hint = «Guardar y seguir» deja la ejecución anterior en { $folder } y la abre en su propia pestaña.
+dialog-restart-discard = Descartar y seguir
+dialog-restart-save = Guardar y seguir
 dialog-clear-title = ¿Limpiar esta sesión?
 dialog-clear-body = Todo lo recibido de { $app } hasta ahora ({ $size }, { $duration }) sale de este visor. La app sigue conectada y lo nuevo aparece desde ahora.
 dialog-clear-save-hint = «Guardar y limpiar» deja una copia en { $folder }.

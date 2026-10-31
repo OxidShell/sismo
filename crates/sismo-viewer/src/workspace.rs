@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use sismo_analysis::query::{Matcher, Term, TermKind};
 use sismo_analysis::{LoadReport, Query, Session};
-use sismo_format::{Chunk, DecodeError, FileWriter};
+use sismo_format::{Chunk, DecodeError, FileWriter, SessionInfo};
 
 use crate::client::{ClientEvent, Command, Connection};
 
@@ -182,6 +182,14 @@ impl DeviceUpload {
     }
 }
 
+/// A run of the app that started while this tab showed an older one.
+#[derive(Debug)]
+pub struct NextRun {
+    pub info: SessionInfo,
+    chunks: Vec<Vec<u8>>,
+    last_seq: u64,
+}
+
 pub struct Live {
     pub addr: SocketAddr,
     pub connection: Option<Connection>,
@@ -199,6 +207,8 @@ pub struct Live {
     pub device_upload: Option<DeviceUpload>,
     /// Highest chunk seq received from the current app session.
     pub last_seq: u64,
+    /// A new run of the app (it restarted), held until the user decides.
+    pub next_run: Option<NextRun>,
     /// When to try again after the connection is lost.
     pub retry: Retry,
     pub last_chunk: Option<Instant>,
@@ -332,6 +342,7 @@ impl SessionView {
             device_upload: None,
             last_seq: 0,
             retry: Retry::default(),
+            next_run: None,
             last_chunk: None,
             events_per_sec: 0.0,
             rate_window: (Instant::now(), 0),
@@ -513,9 +524,7 @@ impl SessionView {
             return None;
         }
         let mut changed = false;
-        let mut restarted = false;
         let mut subscribe = false;
-        let mut saved = None;
         for event in events {
             match event {
                 ClientEvent::Welcome {
@@ -525,12 +534,22 @@ impl SessionView {
                     history_bytes,
                 } => {
                     let known = self.session.info.session_id;
-                    if known != 0 && known != session.session_id {
+                    if known == 0 || known == session.session_id {
+                        self.session.info = session;
+                    } else if live
+                        .next_run
+                        .as_ref()
+                        .is_none_or(|next| next.info.session_id != session.session_id)
+                    {
                         // The app restarted: its timeline starts over and its
-                        // ids mean other things, so nothing old can be merged.
-                        restarted = true;
+                        // ids mean other things, so it cannot be merged. Hold
+                        // the new run until the user decides about this one.
+                        live.next_run = Some(NextRun {
+                            info: session,
+                            chunks: Vec::new(),
+                            last_seq: 0,
+                        });
                     }
-                    self.session.info = session;
                     live.app_filter = filter;
                     live.history_bytes = history_bytes;
                     live.retry = Retry::default();
@@ -554,6 +573,13 @@ impl SessionView {
                 ClientEvent::Chunk { seq, bytes } => {
                     // Seq 0 carries definitions, safe to apply again; anything
                     // else at or below what we have is a replay.
+                    if let Some(next) = &mut live.next_run {
+                        if seq == 0 || seq > next.last_seq {
+                            next.last_seq = next.last_seq.max(seq);
+                            next.chunks.push(bytes);
+                        }
+                        continue;
+                    }
                     if seq != 0 && seq <= live.last_seq {
                         continue;
                     }
@@ -596,16 +622,16 @@ impl SessionView {
                 }
             }
         }
-        if restarted {
-            saved = self.start_over();
-        }
         let Origin::Live(live) = &mut self.origin else {
-            return saved;
+            return None;
         };
         if subscribe && let Some(conn) = &live.connection {
             conn.send(Command::Subscribe {
                 history: true,
-                since: live.last_seq,
+                since: live
+                    .next_run
+                    .as_ref()
+                    .map_or(live.last_seq, |next| next.last_seq),
             });
         }
         let elapsed = live.rate_window.0.elapsed();
@@ -643,7 +669,7 @@ impl SessionView {
             .last()
             .is_some_and(|l| l.level == sismo_format::Level::Error);
         let Origin::Live(live) = &mut self.origin else {
-            return saved;
+            return None;
         };
         if let Some(recording) = &mut live.recording {
             if error_seen && recording.error_seen_at.is_none() {
@@ -653,7 +679,7 @@ impl SessionView {
                 return self.stop_recording();
             }
         }
-        saved
+        None
     }
 
     /// Starts writing the live stream to `path`.
@@ -806,11 +832,35 @@ impl SessionView {
         Ok(())
     }
 
-    /// The app this live tab follows restarted: close the recording (it
-    /// belongs to the old run) and start an empty session for the new run.
-    fn start_over(&mut self) -> Option<Saved> {
+    /// The new run of the app, waiting while the user decides what to do
+    /// with the current one.
+    #[must_use]
+    pub fn next_run(&self) -> Option<&NextRun> {
+        self.live().and_then(|l| l.next_run.as_ref())
+    }
+
+    /// Leaves the current run for the one waiting: the recording of the
+    /// old run is closed, the view starts empty and shows the new run from
+    /// its first chunk (it arrived while the user was deciding).
+    pub fn switch_to_next_run(&mut self) -> Option<Saved> {
+        let next = self.live_mut().and_then(|l| l.next_run.take())?;
+        let saved = self.start_over(next.info);
+        if let Origin::Live(live) = &mut self.origin {
+            live.last_seq = next.last_seq;
+            live.received_bytes = next.chunks.iter().map(|c| c.len() as u64).sum();
+            live.received = next.chunks;
+            if !self.paused {
+                ingest_pending(&mut self.session, &live.received, &mut live.applied);
+            }
+        }
+        self.reset_view();
+        saved
+    }
+
+    /// Starts an empty session for run `info`, closing the recording (it
+    /// belongs to the old run).
+    fn start_over(&mut self, info: SessionInfo) -> Option<Saved> {
         let saved = self.stop_recording();
-        let info = std::mem::take(&mut self.session.info);
         self.session = Session::default();
         self.session.info = info;
         self.groups_applied = false;
