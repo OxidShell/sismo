@@ -63,7 +63,7 @@ pub fn group_label(group: Group) -> String {
 #[must_use]
 pub const fn level(level: Level) -> Rgb {
     match level {
-        Level::Error => ERROR,
+        Level::Panic | Level::Error => ERROR,
         Level::Warn => WARN,
         Level::Info => INFO,
         Level::Debug | Level::Trace => DEBUG,

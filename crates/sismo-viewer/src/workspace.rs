@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use sismo_analysis::query::{Matcher, Term, TermKind};
 use sismo_analysis::{LoadReport, Query, Session};
+use sismo_format::net::CrashReport;
 use sismo_format::{Chunk, DecodeError, FileWriter, SessionInfo};
 
 use crate::client::{ClientEvent, Command, Connection};
@@ -205,6 +206,12 @@ pub struct Live {
     pub received_bytes: u64,
     pub recording: Option<Recording>,
     pub device_upload: Option<DeviceUpload>,
+    /// Crash reports the app keeps from earlier panics.
+    pub crash_reports: Vec<CrashReport>,
+    /// The crash report being downloaded, by name.
+    pub crash_fetch: Option<(String, DeviceUpload)>,
+    /// A downloaded crash report, waiting to be opened.
+    pub crash_saved: Option<PathBuf>,
     /// Highest chunk seq received from the current app session.
     pub last_seq: u64,
     /// A new run of the app (it restarted), held until the user decides.
@@ -340,6 +347,9 @@ impl SessionView {
             received_bytes: 0,
             recording: None,
             device_upload: None,
+            crash_reports: Vec::new(),
+            crash_fetch: None,
+            crash_saved: None,
             last_seq: 0,
             retry: Retry::default(),
             next_run: None,
@@ -612,6 +622,22 @@ impl SessionView {
                         upload.add(offset, total, &bytes);
                     }
                 }
+                ClientEvent::CrashReports(reports) => {
+                    live.crash_reports = reports;
+                    changed = true;
+                }
+                ClientEvent::CrashReportPiece {
+                    name,
+                    offset,
+                    total,
+                    bytes,
+                } => {
+                    if let Some((fetching, upload)) = &mut live.crash_fetch
+                        && *fetching == name
+                    {
+                        upload.add(offset, total, &bytes);
+                    }
+                }
                 ClientEvent::Rtt(rtt) => live.rtt = Some(rtt),
                 ClientEvent::Lost(reason) => {
                     live.status = LiveStatus::Lost {
@@ -649,6 +675,25 @@ impl SessionView {
             && let Some(upload) = live.device_upload.take()
         {
             let _ = std::fs::write(&upload.path, &upload.buffer);
+        }
+        if live
+            .crash_fetch
+            .as_ref()
+            .is_some_and(|(_, upload)| upload.complete())
+            && let Some((name, upload)) = live.crash_fetch.take()
+        {
+            let saved = upload
+                .path
+                .parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|()| std::fs::write(&upload.path, &upload.buffer));
+            // Kept on this computer now, so the device can let it go.
+            if saved.is_ok() {
+                if let Some(conn) = &live.connection {
+                    conn.send(Command::DeleteCrashReport(name));
+                }
+                live.crash_saved = Some(upload.path);
+            }
         }
         if changed {
             if self.follow && !self.paused {
@@ -742,6 +787,24 @@ impl SessionView {
             duration: recording.started.elapsed(),
             markers: recording.markers,
         })
+    }
+
+    /// Downloads the crash report `name` into `dir`; it opens once complete
+    /// (see [`Live::crash_saved`]).
+    pub fn fetch_crash_report(&mut self, name: &str, dir: &Path) {
+        let Some(live) = self.live_mut() else { return };
+        let Some(conn) = &live.connection else { return };
+        conn.send(Command::FetchCrashReport(name.to_owned()));
+        live.crash_fetch = Some((name.to_owned(), DeviceUpload::new(dir.join(name))));
+    }
+
+    /// Deletes every crash report the app keeps, without downloading them.
+    pub fn discard_crash_reports(&mut self) {
+        let Some(live) = self.live_mut() else { return };
+        let Some(conn) = &live.connection else { return };
+        for report in live.crash_reports.drain(..) {
+            conn.send(Command::DeleteCrashReport(report.name));
+        }
     }
 
     pub fn add_marker(&mut self, note: String) {

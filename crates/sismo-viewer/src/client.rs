@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use sismo_format::SessionInfo;
-use sismo_format::net::{Beacon, DISCOVERY_APP_ID, ToRecorder, ToViewer, stream};
+use sismo_format::net::{Beacon, CrashReport, DISCOVERY_APP_ID, ToRecorder, ToViewer, stream};
 use tokio::sync::mpsc;
 use zudp::{Discovery, DiscoveryConfig, DiscoveryEvent, Keypair, RawBytes, Zudp};
 
@@ -53,6 +53,14 @@ pub enum ClientEvent {
         bytes: Vec<u8>,
     },
     Rtt(Duration),
+    /// Crash reports the app keeps from panics.
+    CrashReports(Vec<CrashReport>),
+    CrashReportPiece {
+        name: String,
+        offset: u64,
+        total: u64,
+        bytes: Vec<u8>,
+    },
     Lost(String),
 }
 
@@ -69,6 +77,8 @@ pub enum Command {
     Marker(String),
     StartDeviceRecording,
     StopDeviceRecording,
+    FetchCrashReport(String),
+    DeleteCrashReport(String),
     Close,
 }
 
@@ -223,6 +233,9 @@ impl Connection {
                                     ToViewer::Filter { filter } => ClientEvent::Filter(filter),
                                     ToViewer::DeviceRecording { offset, total, bytes } =>
                                         ClientEvent::DeviceRecording { offset, total, bytes },
+                                    ToViewer::CrashReports { reports } => ClientEvent::CrashReports(reports),
+                                    ToViewer::CrashReportPiece { name, offset, total, bytes } =>
+                                        ClientEvent::CrashReportPiece { name, offset, total, bytes },
                                     ToViewer::Pong { nonce } => {
                                         let Some(pos) = pings.iter().position(|(n, _)| *n == nonce) else { continue };
                                         let (_, sent) = pings.remove(pos);
@@ -245,6 +258,8 @@ impl Connection {
                                     Some(Command::Marker(note)) => ToRecorder::Marker { note },
                                     Some(Command::StartDeviceRecording) => ToRecorder::StartDeviceRecording,
                                     Some(Command::StopDeviceRecording) => ToRecorder::StopDeviceRecording,
+                                    Some(Command::FetchCrashReport(name)) => ToRecorder::FetchCrashReport { name },
+                                    Some(Command::DeleteCrashReport(name)) => ToRecorder::DeleteCrashReport { name },
                                 };
                                 if conn.send_stream(wire(message), stream::CONTROL).await.is_err() {
                                     return lost("could not reach the app".into());

@@ -317,6 +317,7 @@ impl Workspace {
         }
         self.retry_lost();
         let mut saved: Vec<Saved> = Vec::new();
+        let mut crashes: Vec<std::path::PathBuf> = Vec::new();
         let active_id = self.active.map(|i| self.sessions_id(i));
         let mut wants_pairing = false;
         let mut paired: Vec<(String, String, std::net::SocketAddr)> = Vec::new();
@@ -328,6 +329,9 @@ impl Workspace {
             }
             if let Some(done) = session.poll_live() {
                 saved.push(done);
+            }
+            if let Some(path) = session.live_mut().and_then(|l| l.crash_saved.take()) {
+                crashes.push(path);
             }
             if !session.groups_applied && !session.session.info.app.is_empty() {
                 session
@@ -362,6 +366,9 @@ impl Workspace {
         for done in saved {
             self.recording_saved(&done);
         }
+        for path in crashes {
+            self.open_crash_report(&path);
+        }
         for (app, device, addr) in paired {
             let fingerprint = self
                 .discovered
@@ -377,6 +384,27 @@ impl Workspace {
         {
             self.toast = None;
         }
+    }
+
+    /// Opens a downloaded crash report on its panic, backtrace in view.
+    fn open_crash_report(&mut self, path: &Path) {
+        self.open_file(path);
+        if let Some(view) = self.active_mut()
+            && let Some(index) = view
+                .session
+                .logs
+                .iter()
+                .rposition(|l| l.level == sismo_format::Level::Panic)
+        {
+            view.tab = crate::workspace::Tab::Logs;
+            view.selected_log = Some(index);
+        }
+        self.notify(
+            "toast-crash-opened",
+            path.display().to_string(),
+            Some(path.to_path_buf()),
+            false,
+        );
     }
 
     fn sessions_id(&self, index: usize) -> u64 {

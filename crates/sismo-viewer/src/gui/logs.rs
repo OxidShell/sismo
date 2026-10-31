@@ -3,9 +3,10 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use freya::clipboard::Clipboard;
 use freya::prelude::*;
 use sismo_analysis::units::Clock;
-use sismo_analysis::{LogEntry, Query, Session};
+use sismo_analysis::{LogEntry, Panic, Query, Session};
 use sismo_format::{Level, Source};
 
 use super::Workspace;
@@ -80,9 +81,12 @@ fn rows(view: &SessionView, query: &Query) -> Vec<Row> {
             time: Clock(l.t).to_string(),
             level: l.level,
             source: l.source,
-            target: session
-                .callsite(l.callsite)
-                .map_or_else(|| "?".to_owned(), |c| c.target.clone()),
+            target: match session.panic_of(l) {
+                Some(p) => p.location.clone(),
+                None => session
+                    .callsite(l.callsite)
+                    .map_or_else(|| "?".to_owned(), |c| c.target.clone()),
+            },
             highlights: query.highlights(&l.message),
             message: l.message.clone(),
         })
@@ -121,6 +125,9 @@ fn enclosing(session: &Session, log: &LogEntry) -> Vec<String> {
 fn detail(mut ws: State<Workspace>, view: &SessionView, index: usize) -> Option<Rect> {
     let session = &view.session;
     let log = session.logs.get(index)?;
+    if let Some(panic) = session.panic_of(log) {
+        return Some(panic_detail(ws, view, panic));
+    }
     let def = session.callsite(log.callsite);
     let chain = enclosing(session, log);
     let frame = session.frames.partition_point(|f| f.end <= log.t);
@@ -224,6 +231,95 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, index: usize) -> Option<
                     )),
             ),
     )
+}
+
+/// A panic: what and where, the thread, and its backtrace.
+fn panic_detail(mut ws: State<Workspace>, view: &SessionView, panic: &Panic) -> Rect {
+    let session = &view.session;
+    let t = panic.t;
+    let thread = session.thread_name(panic.thread).to_owned();
+    let copy = format!(
+        "panicked at {} on thread {}:\n{}\n\n{}",
+        panic.location, thread, panic.message, panic.backtrace
+    );
+    rect()
+        .width(Size::fill())
+        .height(Size::px(300.))
+        .horizontal()
+        .content(Content::flex())
+        .padding((14., 16.))
+        .spacing(24.)
+        .background(theme::color(theme::BG1))
+        .child(
+            rect()
+                .width(Size::px(420.))
+                .spacing(8.)
+                .child(
+                    mono(Level::Panic.as_str().to_uppercase(), 11., theme::ERROR).font_weight(600),
+                )
+                .child(
+                    mono(panic.message.clone(), 13., theme::TEXT)
+                        .max_lines(6)
+                        .width(Size::fill()),
+                )
+                .child(
+                    mono(
+                        tr!(
+                            "logs-panic-where",
+                            time = Clock(t).to_string(),
+                            location = panic.location.as_str(),
+                            thread = thread.as_str(),
+                        ),
+                        11.,
+                        theme::TEXT3,
+                    )
+                    .max_lines(3)
+                    .width(Size::fill()),
+                )
+                .child(
+                    rect()
+                        .horizontal()
+                        .spacing(8.)
+                        .child(button(tr!("logs-panic-copy"), Kind::Secondary, move |_| {
+                            let _ = Clipboard::set(copy.clone());
+                        }))
+                        .child(button(
+                            tr!("common-show-in-timeline"),
+                            Kind::Secondary,
+                            move |_| {
+                                if let Some(v) = ws.write().active_mut() {
+                                    v.view = (t.saturating_sub(50_000_000), t + 10_000_000);
+                                    v.follow = false;
+                                    v.tab = Tab::Timeline;
+                                }
+                            },
+                        )),
+                ),
+        )
+        .child(
+            rect()
+                .width(Size::flex(1.))
+                .height(Size::fill())
+                .content(Content::flex())
+                .spacing(8.)
+                .child(caption(&tr!("logs-panic-backtrace")))
+                .child(if panic.backtrace.is_empty() {
+                    text(tr!("logs-panic-no-backtrace"), 12., theme::TEXT3).into_element()
+                } else {
+                    ScrollView::new()
+                        .width(Size::fill())
+                        .height(Size::flex(1.))
+                        .child(
+                            label()
+                                .text(panic.backtrace.clone())
+                                .font_family(theme::MONO)
+                                .font_size(12.)
+                                .color(theme::color(theme::TEXT2))
+                                .width(Size::fill()),
+                        )
+                        .into_element()
+                }),
+        )
 }
 
 pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
@@ -380,7 +476,11 @@ impl Component for LogList {
                     .cross_align(Alignment::Center)
                     .padding((0., 16.))
                     .spacing(14.)
-                    .background(theme::color(if on { theme::BG3 } else { theme::BG0 }))
+                    .background(theme::color(match (on, row.level) {
+                        (true, _) => theme::BG3,
+                        (false, Level::Panic) => theme::REC_DIM,
+                        (false, _) => theme::BG0,
+                    }))
                     .cursor(CursorIcon::Pointer)
                     .on_press(move |_| {
                         if let Some(v) = ws.write().active_mut() {

@@ -577,6 +577,63 @@ fn banner(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
     })
 }
 
+/// Crash reports the app kept from earlier panics, offered for download.
+fn crash_banner(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
+    let live = view.live()?;
+    let newest = live.crash_reports.first()?;
+    let age = sismo_format::unix_ns().saturating_sub(newest.written_unix_ns);
+    let name = newest.name.clone();
+    let fetching = live.crash_fetch.is_some();
+    Some(
+        rect()
+            .width(Size::fill())
+            .horizontal()
+            .content(Content::flex())
+            .cross_align(Alignment::Center)
+            .padding((6., 16.))
+            .spacing(8.)
+            .background(theme::color(theme::REC_DIM))
+            .child(
+                text(
+                    tr!(
+                        "shell-crash-banner",
+                        count = live.crash_reports.len().to_string(),
+                        age = Nanos(age).to_string(),
+                    ),
+                    12.,
+                    theme::TEXT,
+                )
+                .width(Size::flex(1.)),
+            )
+            .child(button(
+                if fetching {
+                    tr!("shell-crash-fetching")
+                } else {
+                    tr!("shell-crash-open")
+                },
+                Kind::Secondary,
+                move |_| {
+                    let mut w = ws.write();
+                    let dir = w.prefs.recordings_dir();
+                    if let Some(v) = w.active_mut()
+                        && v.live().is_some_and(|l| l.crash_fetch.is_none())
+                    {
+                        v.fetch_crash_report(&name, &dir);
+                    }
+                },
+            ))
+            .child(button(
+                tr!("shell-crash-discard"),
+                Kind::Secondary,
+                move |_| {
+                    if let Some(v) = ws.write().active_mut() {
+                        v.discard_crash_reports();
+                    }
+                },
+            )),
+    )
+}
+
 pub fn session_screen(ws: State<Workspace>, index: usize) -> Rect {
     let w = ws.read();
     let Some(view) = w.sessions.get(index) else {
@@ -587,6 +644,7 @@ pub fn session_screen(ws: State<Workspace>, index: usize) -> Rect {
     let side = side_panel(ws, view);
     let status = status_bar(ws, view);
     let banner = banner(ws, view);
+    let crash = crash_banner(ws, view);
     let body = match waiting(ws, view) {
         Some(waiting) => waiting.into_element(),
         None => match view.tab {
@@ -618,6 +676,7 @@ pub fn session_screen(ws: State<Workspace>, index: usize) -> Rect {
                         .width(Size::flex(1.))
                         .height(Size::fill())
                         .maybe_child(banner)
+                        .maybe_child(crash)
                         .child(body),
                 ),
         )
