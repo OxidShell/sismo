@@ -3,19 +3,19 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/SergioRibera/sismo"
 authors = ["Sergio Ribera"]
 
 [workspace.dependencies]
-sismo-format = { version = "0.1.0", path = "crates/sismo-format" }
-sismo = { version = "0.1.0", path = "crates/sismo" }
+sismo-format = { version = "0.1.1", path = "crates/sismo-format" }
+sismo = { version = "0.1.1", path = "crates/sismo" }
 thiserror = "2"
 lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 crc32fast = "1.5"
-sismo-macros = { version = "0.1.0", path = "crates/sismo-macros" }
+sismo-macros = { version = "0.1.1", path = "crates/sismo-macros" }
 log = { version = "0.4", features = ["std", "kv"] }
 tracing = "0.1"
 tracing-core = "0.1"
@@ -26,7 +26,7 @@ quote = "1"
 proc-macro2 = "1"
 zudp = { version = "0.3.9", default-features = false, features = ["security", "discovery"] }
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
-sismo-analysis = { version = "0.1.0", path = "crates/sismo-analysis" }
+sismo-analysis = { version = "0.1.1", path = "crates/sismo-analysis" }
 regex-lite = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

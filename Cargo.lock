@@ -4245,7 +4245,7 @@ checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
 name = "sismo"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "istmo-core",
  "libc",
@@ -4262,7 +4262,7 @@ dependencies = [
 
 [[package]]
 name = "sismo-analysis"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "regex-lite",
  "serde",
@@ -4273,7 +4273,7 @@ dependencies = [
 
 [[package]]
 name = "sismo-format"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crc32fast",
  "lz4_flex",
@@ -4282,7 +4282,7 @@ dependencies = [
 
 [[package]]
 name = "sismo-freya"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "freya-core",
  "freya-winit",
@@ -4291,7 +4291,7 @@ dependencies = [
 
 [[package]]
 name = "sismo-macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4300,7 +4300,7 @@ dependencies = [
 
 [[package]]
 name = "sismo-viewer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bincode",
  "clap",
