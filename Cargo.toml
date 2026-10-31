@@ -41,7 +41,7 @@ istmo = "0.1.1-alpha.4"
 istmo-core = "0.1.1-alpha.4"
 istmo-file-picker = "0.1.1-alpha.4"
 istmo-opener = "0.1.1-alpha.4"
-istmo-plugins = { version = "0.1.1-alpha.4", features = ["desktop-publisher"] }
+istmo-plugins = "0.1.1-alpha.4"
 bincode = { version = "2", features = ["derive", "std"] }
 
 [workspace.lints.clippy]
