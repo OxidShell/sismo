@@ -292,7 +292,19 @@ impl Component for QueryBar {
                 }
                 false
             }
-            _ => true,
+            // Escape leaves the field and still reaches the shortcuts, like
+            // in every other input.
+            Key::Named(NamedKey::Escape) => true,
+            _ => {
+                // Typed text is the field's: a prevented key down cancels the
+                // global key down, so `m`, space or WASD never fire shortcuts.
+                // Ctrl/Cmd chords stay global.
+                if !(e.modifiers.ctrl() || e.modifiers.meta()) {
+                    e.stop_propagation();
+                    e.prevent_default();
+                }
+                true
+            }
         });
 
         let popup = (focused && !list.is_empty()).then(|| {
@@ -396,5 +408,53 @@ impl Component for QueryBar {
                     .child(text(e, 11., theme::ERROR))
             }))
             .maybe_child(popup)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use freya::prelude::*;
+    use freya_testing::prelude::*;
+
+    use super::{QueryBar, Workspace};
+
+    thread_local! {
+        static GLOBAL_KEYS: Cell<u32> = const { Cell::new(0) };
+    }
+
+    fn app() -> impl IntoElement {
+        let ws = use_state(|| Workspace::new(None, None));
+        rect()
+            .expanded()
+            .on_global_key_down(|_: Event<KeyboardEventData>| {
+                GLOBAL_KEYS.with(|k| k.set(k.get() + 1));
+            })
+            .child(QueryBar { ws, index: 0 })
+    }
+
+    /// Letters typed into the query bar never reach the global shortcuts;
+    /// Escape leaves the field and does.
+    #[test]
+    fn typing_does_not_reach_global_shortcuts() {
+        let (mut runner, ()) = TestingRunner::new(app, (800., 300.).into(), |_| {}, 1.);
+        let m = || Key::Character("m".into());
+
+        runner.press_key(m());
+        assert_eq!(GLOBAL_KEYS.with(Cell::get), 1);
+
+        runner.click_cursor((100., 15.));
+        // Focus requested during the click lands on the next sync.
+        runner.sync_and_update();
+        runner.press_key(m());
+        runner.press_key(Key::Character(" ".into()));
+        assert_eq!(GLOBAL_KEYS.with(Cell::get), 1);
+
+        runner.press_key(Key::Named(NamedKey::Escape));
+        runner.sync_and_update();
+        assert_eq!(GLOBAL_KEYS.with(Cell::get), 2);
+        runner.press_key(m());
+        assert_eq!(GLOBAL_KEYS.with(Cell::get), 3);
     }
 }
