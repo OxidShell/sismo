@@ -1,0 +1,16 @@
+# cargo-release — version bumps and tags only.
+#
+# `cargo release <level>` bumps the shared workspace version, rewrites the
+# intra-workspace dependency versions, commits and tags `v<version>`. The
+# tag triggers `.github/workflows/release.yml`, which builds and uploads
+# the viewer bundles. Publishing to crates.io stays a manual
+# `cargo publish -p <crate>` in dependency order.
+publish = false
+verify = false
+shared-version = true
+consolidate-commits = true
+allow-branch = ["main"]
+pre-release-commit-message = "chore(release): {{version}}"
+tag-name = "v{{version}}"
+tag-message = "v{{version}}"
+dependent-version = "upgrade"
