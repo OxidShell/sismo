@@ -143,10 +143,7 @@ impl Identity {
             _ => identity.save_key(),
         }
         if let Ok(bytes) = std::fs::read(dir.join(Self::TRUSTED_FILE)) {
-            identity.trusted = bytes
-                .chunks_exact(32)
-                .filter_map(|c| <[u8; 32]>::try_from(c).ok())
-                .collect();
+            identity.trusted = bytes.as_chunks::<32>().0.iter().copied().collect();
         }
         identity
     }
