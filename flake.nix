@@ -147,24 +147,22 @@
           inherit (nativeTarget) formats;
         });
 
-        # Windows: `cargo build` runs on a Windows runner (MSVC + prebuilt
-        # Skia), the job uploads `sismo.exe`, and this wraps that directory
-        # into a derivation for nix-bundle-app. Impure by necessity:
-        # `SISMO_WINDOWS_DIST=<dir> nix build --impure .#windows-bundles`.
-        # The attributes only exist while the variable is set, so a pure
-        # `nix flake check` never trips over them.
-        windowsDist = builtins.getEnv "SISMO_WINDOWS_DIST";
+        # Windows: cross-built from Linux with LLVM against the MSVC SDK
+        # (nix/windows.nix), then packaged by nix-bundle-app like any other
+        # target. Only x86_64-linux hosts it.
+        windows = import ./nix/windows.nix {
+          inherit
+            pkgs
+            lib
+            crane
+            pname
+            version
+            ;
+          inherit (sismo) src;
+        };
         windowsBundles =
           let
-            drv = pkgs.runCommand "${pname}-${version}-x86_64-windows" { } ''
-              mkdir -p $out/bin
-              cp -r ${
-                builtins.path {
-                  path = windowsDist;
-                  name = "${pname}-windows-dist";
-                }
-              }/. $out/bin/
-            '';
+            drv = windows.package;
           in
           lib.mapAttrs' (name: value: lib.nameValuePair "windows-${name}" value) (mkBundles {
             inherit drv info;
@@ -181,9 +179,7 @@
           in
           builtins.toJSON {
             nix = map (t: { inherit (t) system runner; }) (builtins.filter (t: t.kind == "nix") entries);
-            prebuilt = map (t: {
-              inherit (t) system runner bundleRunner;
-            }) (builtins.filter (t: t.kind == "prebuilt") entries);
+            cross = map (t: { inherit (t) system runner; }) (builtins.filter (t: t.kind == "cross") entries);
           };
       in
       {
@@ -194,7 +190,14 @@
           inherit (sismo) cargoArtifacts;
         }
         // nativeBundles
-        // lib.optionalAttrs (system == "x86_64-linux" && windowsDist != "") windowsBundles;
+        // lib.optionalAttrs (system == "x86_64-linux") (
+          windowsBundles
+          // {
+            "${pname}-windows" = windows.package;
+            windows-cargoArtifacts = windows.cargoArtifacts;
+            windows-sdk = windows.xwinSdk;
+          }
+        );
 
         apps.matrix = {
           type = "app";
