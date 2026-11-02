@@ -58,3 +58,14 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# istmo-plugins 0.1.1-alpha.5 does not compile on Windows or on targets where
+# c_char is unsigned (aarch64); take the fixed commit until alpha.6 ships.
+# Every istmo crate the fix touches comes from the same tree so one istmo-core
+# links.
+[patch.crates-io]
+istmo-core = { git = "https://github.com/SergioRibera/istmo", rev = "cc29d075fbeadee4ece9e9876f83b7ad15598ffc" }
+istmo-macros = { git = "https://github.com/SergioRibera/istmo", rev = "cc29d075fbeadee4ece9e9876f83b7ad15598ffc" }
+istmo-build = { git = "https://github.com/SergioRibera/istmo", rev = "cc29d075fbeadee4ece9e9876f83b7ad15598ffc" }
+istmo-plugins = { git = "https://github.com/SergioRibera/istmo", rev = "cc29d075fbeadee4ece9e9876f83b7ad15598ffc" }
+istmo-plugins-schema = { git = "https://github.com/SergioRibera/istmo", rev = "cc29d075fbeadee4ece9e9876f83b7ad15598ffc" }

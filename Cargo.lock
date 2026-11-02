@@ -2330,8 +2330,7 @@ dependencies = [
 [[package]]
 name = "istmo-build"
 version = "0.1.1-alpha.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b244fdbbd2e9e5ba7c1cadeea2b8c10dea5e465ffa819cd76f8047c548c64cce"
+source = "git+https://github.com/SergioRibera/istmo?rev=cc29d075fbeadee4ece9e9876f83b7ad15598ffc#cc29d075fbeadee4ece9e9876f83b7ad15598ffc"
 dependencies = [
  "bincode",
  "globset",
@@ -2348,8 +2347,7 @@ dependencies = [
 [[package]]
 name = "istmo-core"
 version = "0.1.1-alpha.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "172f1db6f4fbb9febfb8e161153d3b1bc1fdd5f1a5a4d8b293771eb733f4eb41"
+source = "git+https://github.com/SergioRibera/istmo?rev=cc29d075fbeadee4ece9e9876f83b7ad15598ffc#cc29d075fbeadee4ece9e9876f83b7ad15598ffc"
 dependencies = [
  "bincode",
  "flume",
@@ -2388,8 +2386,7 @@ dependencies = [
 [[package]]
 name = "istmo-macros"
 version = "0.1.1-alpha.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "699e6c5ef220a6a307a406460e458f0eef63f4520f1cf425378ee9b162d0a62e"
+source = "git+https://github.com/SergioRibera/istmo?rev=cc29d075fbeadee4ece9e9876f83b7ad15598ffc#cc29d075fbeadee4ece9e9876f83b7ad15598ffc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2411,8 +2408,7 @@ dependencies = [
 [[package]]
 name = "istmo-plugins"
 version = "0.1.1-alpha.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41e4358da24b1d77ddc564af3da8e5885642e3f64e959860f7a1f3151f664e8d"
+source = "git+https://github.com/SergioRibera/istmo?rev=cc29d075fbeadee4ece9e9876f83b7ad15598ffc#cc29d075fbeadee4ece9e9876f83b7ad15598ffc"
 dependencies = [
  "bincode",
  "flume",
@@ -2429,8 +2425,7 @@ dependencies = [
 [[package]]
 name = "istmo-plugins-schema"
 version = "0.1.1-alpha.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8169660367fea6a82a7e5a14d46e4aeceaf17d84c941091995496231348587b0"
+source = "git+https://github.com/SergioRibera/istmo?rev=cc29d075fbeadee4ece9e9876f83b7ad15598ffc#cc29d075fbeadee4ece9e9876f83b7ad15598ffc"
 dependencies = [
  "istmo-build",
 ]
