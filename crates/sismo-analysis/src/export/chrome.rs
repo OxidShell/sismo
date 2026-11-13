@@ -10,8 +10,8 @@ fn micros(ns: u64) -> f64 {
     ns as f64 / 1000.0
 }
 
-/// Chrome trace event JSON: complete events for spans, instants for logs,
-/// counters as `C` events.
+/// Chrome trace event JSON: complete events for spans, `b`/`e` pairs for
+/// async spans, instants for logs, counters as `C` events.
 pub(super) fn write(
     session: &Session,
     options: &ExportOptions,
@@ -39,6 +39,24 @@ pub(super) fn write(
                 "tid": thread.id,
             }));
         }
+    }
+    for span in session.async_spans_in(from, to) {
+        if !options
+            .query
+            .matches_span(session, session.thread_name(span.thread), &span.as_span())
+        {
+            continue;
+        }
+        let name = session.name(span.callsite);
+        let cat = session.crate_of(span.callsite);
+        events.push(json!({
+            "ph": "b", "name": name, "cat": cat, "id": span.id,
+            "ts": micros(span.start), "pid": pid, "tid": span.thread,
+        }));
+        events.push(json!({
+            "ph": "e", "name": name, "cat": cat, "id": span.id,
+            "ts": micros(span.end.min(session.end)), "pid": pid, "tid": span.thread,
+        }));
     }
     if options.include_logs {
         for log in session

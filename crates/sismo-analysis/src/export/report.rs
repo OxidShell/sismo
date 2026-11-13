@@ -70,7 +70,7 @@ pub(super) fn render(s: &Summary) -> String {
         let _ = writeln!(
             out,
             "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
-            row.name,
+            row.label(),
             row.krate,
             row.group,
             row.calls,

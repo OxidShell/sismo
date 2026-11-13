@@ -11,6 +11,11 @@ use crate::session::{Frame, Session};
 pub struct FunctionStats {
     pub callsite: u32,
     pub name: String,
+    /// Async spans: wall time from first poll to completion, across `.await`
+    /// points and threads. They have no self time, and the same callsite can
+    /// also have a sync row for the time its polls ran.
+    #[serde(rename = "async")]
+    pub is_async: bool,
     #[serde(rename = "crate")]
     pub krate: String,
     pub group: Group,
@@ -161,6 +166,18 @@ fn clipped_self(self_ns: u64, start: u64, end: u64, from: u64, to: u64) -> u64 {
         .unwrap_or(self_ns)
 }
 
+impl FunctionStats {
+    /// The function name, marked when the row is an async span.
+    #[must_use]
+    pub fn label(&self) -> String {
+        if self.is_async {
+            format!("{} (async)", self.name)
+        } else {
+            self.name.clone()
+        }
+    }
+}
+
 impl Session {
     /// Per-callsite statistics of spans in `[from, to)` that pass `query`.
     #[must_use]
@@ -179,33 +196,47 @@ impl Session {
         }
         let buckets = buckets.max(1);
         let width = (to.saturating_sub(from) / buckets as u64).max(1);
-        let mut acc: HashMap<u32, Acc> = HashMap::new();
+        let new_acc = || Acc {
+            durations: Vec::new(),
+            self_ns: 0,
+            per_bucket: vec![Vec::new(); buckets],
+            alloc: (0, 0, 0),
+        };
+        let bucket_of = |start: u64| {
+            usize::try_from(start.saturating_sub(from) / width)
+                .unwrap_or(usize::MAX)
+                .min(buckets - 1)
+        };
+        let mut acc: HashMap<(u32, bool), Acc> = HashMap::new();
         for thread in &self.threads {
             for span in thread.spans_in(from, to) {
                 if span.is_open() || !query.matches_span(self, &thread.name, span) {
                     continue;
                 }
-                let entry = acc.entry(span.callsite).or_insert_with(|| Acc {
-                    durations: Vec::new(),
-                    self_ns: 0,
-                    per_bucket: vec![Vec::new(); buckets],
-                    alloc: (0, 0, 0),
-                });
+                let entry = acc.entry((span.callsite, false)).or_insert_with(new_acc);
                 entry.alloc.0 += span.alloc_bytes;
                 entry.alloc.1 += span.alloc_self_bytes;
                 entry.alloc.2 += span.alloc_count;
                 let duration = span.end - span.start;
                 entry.durations.push(duration);
                 entry.self_ns += span.self_ns;
-                let bucket = usize::try_from(span.start.saturating_sub(from) / width)
-                    .unwrap_or(usize::MAX)
-                    .min(buckets - 1);
-                entry.per_bucket[bucket].push(duration);
+                entry.per_bucket[bucket_of(span.start)].push(duration);
             }
+        }
+        for span in self.async_spans_in(from, to) {
+            if span.is_open()
+                || !query.matches_span(self, self.thread_name(span.thread), &span.as_span())
+            {
+                continue;
+            }
+            let entry = acc.entry((span.callsite, true)).or_insert_with(new_acc);
+            let duration = span.end - span.start;
+            entry.durations.push(duration);
+            entry.per_bucket[bucket_of(span.start)].push(duration);
         }
         let mut rows: Vec<FunctionStats> = acc
             .into_iter()
-            .map(|(callsite, mut a)| {
+            .map(|((callsite, is_async), mut a)| {
                 a.durations.sort_unstable();
                 let total: u64 = a.durations.iter().sum();
                 let calls = a.durations.len() as u64;
@@ -213,6 +244,7 @@ impl Session {
                 FunctionStats {
                     callsite,
                     name: self.name(callsite).to_owned(),
+                    is_async,
                     krate: self.crate_of(callsite).to_owned(),
                     group: self.group_of(callsite),
                     file: def.map(|d| d.file.clone()).unwrap_or_default(),
@@ -267,6 +299,19 @@ impl Session {
                     .filter(move |s| s.callsite == callsite && !s.is_open())
                     .map(move |s| (s.end - s.start, s.start, t.id))
             })
+            .collect();
+        calls.sort_unstable_by_key(|c| std::cmp::Reverse(c.0));
+        calls
+    }
+
+    /// Like [`Self::calls_of`] for the async spans of `callsite`; the thread is
+    /// the one that started each span.
+    #[must_use]
+    pub fn async_calls_of(&self, callsite: u32, (from, to): (u64, u64)) -> Vec<(u64, u64, u32)> {
+        let mut calls: Vec<(u64, u64, u32)> = self
+            .async_spans_in(from, to)
+            .filter(|s| s.callsite == callsite && !s.is_open())
+            .map(|s| (s.end - s.start, s.start, s.thread))
             .collect();
         calls.sort_unstable_by_key(|c| std::cmp::Reverse(c.0));
         calls
@@ -486,5 +531,49 @@ mod tests {
         );
         assert_eq!(fw.len(), 1);
         assert_eq!(s.calls_of(2, window)[0].0, 10_000_000);
+    }
+
+    #[test]
+    fn async_spans_get_their_own_rows() {
+        let mut s = session();
+        let at = s.end;
+        s.ingest(vec![
+            Record::Batch {
+                thread: 1,
+                events: vec![
+                    Event::AsyncBegin {
+                        t: at,
+                        callsite: 2,
+                        id: 7,
+                    },
+                    Event::Begin {
+                        t: at + 1_000_000,
+                        callsite: 2,
+                    },
+                    Event::End { t: at + 2_000_000 },
+                ],
+            },
+            Record::Batch {
+                thread: 2,
+                events: vec![Event::AsyncEnd {
+                    t: at + 150_000_000,
+                    id: 7,
+                }],
+            },
+        ]);
+        let window = (0, s.end + 1);
+        let rows = s.functions(&Query::default(), window, 1, SortBy::Name);
+        let row = |is_async| {
+            rows.iter()
+                .find(|r| r.callsite == 2 && r.is_async == is_async)
+                .unwrap()
+        };
+        assert_eq!(row(false).calls, 11);
+        let async_row = row(true);
+        assert_eq!(async_row.calls, 1);
+        assert_eq!(async_row.total_ns, 150_000_000);
+        assert_eq!(async_row.self_ns, 0);
+        assert_eq!(async_row.label(), "freya_core::render (async)");
+        assert_eq!(s.async_calls_of(2, window), vec![(150_000_000, at, 1)]);
     }
 }

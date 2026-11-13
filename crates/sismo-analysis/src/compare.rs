@@ -80,7 +80,7 @@ pub fn compare(a: &Session, b: &Session, query: &Query, metric: Metric) -> Vec<C
     let rows = |s: &Session| -> HashMap<String, FunctionStats> {
         s.functions(query, query.window(s), 1, SortBy::Name)
             .into_iter()
-            .map(|r| (r.name.clone(), r))
+            .map(|r| (r.label(), r))
             .collect()
     };
     let (left, right) = (rows(a), rows(b));

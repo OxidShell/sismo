@@ -44,6 +44,20 @@ impl Span {
     }
 }
 
+/// A thread's stack at one instant: depth and innermost open span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StackMark {
+    depth: usize,
+    top: Option<u32>,
+}
+
+/// An async span still running, with the stack of the thread it began on.
+#[derive(Debug, Clone, Copy)]
+struct PendingAsync {
+    span: AsyncSpan,
+    mark: StackMark,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Open {
     index: u32,
@@ -107,6 +121,75 @@ impl Thread {
         }
     }
 
+    /// Depth and innermost open span, to tell later whether a span that
+    /// begins now nested properly.
+    fn stack_mark(&self) -> StackMark {
+        StackMark {
+            depth: self.stack.len(),
+            top: self.stack.last().map(|o| o.index),
+        }
+    }
+
+    /// Inserts a span only known once it ends, an async scope that turned out
+    /// to run nested on this thread: the stack must be the one `mark` saw at
+    /// `start`. The spans that began since become its children. Returns false
+    /// when it did not nest, so the caller keeps it as an async span.
+    fn insert_nested(&mut self, start: u64, end: u64, callsite: u32, mark: StackMark) -> bool {
+        if self.stack_mark() != mark {
+            return false;
+        }
+        let depth = u16::try_from(mark.depth).unwrap_or(u16::MAX);
+        // After every open span, even one that began in the same nanosecond.
+        let first = self
+            .spans
+            .partition_point(|s| s.start < start)
+            .max(mark.top.map_or(0, |top| top as usize + 1));
+        let children: Vec<usize> = (first..self.spans.len())
+            .filter(|&i| self.spans[i].depth == depth)
+            .collect();
+        // A sismo `async fn` done in its first poll: that poll span already
+        // shows it.
+        if let [only] = children[..]
+            && self.spans[only].callsite == callsite
+        {
+            return true;
+        }
+        let children_ns: u64 = children.iter().map(|&i| self.spans[i].duration(end)).sum();
+        let children_alloc: u64 = children.iter().map(|&i| self.spans[i].alloc_bytes).sum();
+        let index = u32::try_from(first).unwrap_or(u32::MAX);
+        for span in &mut self.spans[first..] {
+            if span.depth == depth {
+                span.parent = Some(index);
+            } else if let Some(parent) = span.parent.as_mut()
+                && *parent >= index
+            {
+                *parent += 1;
+            }
+            span.depth = span.depth.saturating_add(1);
+            self.max_depth = self.max_depth.max(span.depth);
+        }
+        let duration = end.saturating_sub(start);
+        self.spans.insert(
+            first,
+            Span {
+                start,
+                end,
+                callsite,
+                depth,
+                parent: mark.top,
+                self_ns: duration.saturating_sub(children_ns),
+                alloc_bytes: children_alloc,
+                alloc_count: 0,
+                alloc_self_bytes: 0,
+            },
+        );
+        self.max_depth = self.max_depth.max(depth);
+        if let Some(parent) = self.stack.last_mut() {
+            parent.children_ns = parent.children_ns.saturating_sub(children_ns) + duration;
+        }
+        true
+    }
+
     /// Index of the first span starting at or after `t`.
     #[must_use]
     pub fn first_at(&self, t: u64) -> usize {
@@ -161,6 +244,36 @@ pub struct AsyncSpan {
     pub thread: u32,
     pub start: u64,
     pub end: u64,
+}
+
+impl AsyncSpan {
+    #[must_use]
+    pub fn duration(&self, now: u64) -> u64 {
+        self.end.min(now).saturating_sub(self.start)
+    }
+
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.end == OPEN
+    }
+
+    /// The same interval as a top-level thread span, for the filters and
+    /// exports that take one. Wall time is not time spent on a thread, so it
+    /// carries no self time.
+    #[must_use]
+    pub fn as_span(&self) -> Span {
+        Span {
+            start: self.start,
+            end: self.end,
+            callsite: self.callsite,
+            depth: 0,
+            parent: None,
+            self_ns: 0,
+            alloc_bytes: 0,
+            alloc_count: 0,
+            alloc_self_bytes: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -234,7 +347,9 @@ pub struct Session {
     pub threads: Vec<Thread>,
     thread_index: HashMap<u32, usize>,
     pub async_spans: Vec<AsyncSpan>,
-    open_async: HashMap<u64, usize>,
+    /// Async spans still running; they join `async_spans` when they end,
+    /// unless they turn out to have run nested on one thread.
+    open_async: HashMap<u64, PendingAsync>,
     pub logs: Vec<LogEntry>,
     pub counters: HashMap<u32, Vec<(u64, f64)>>,
     pub frames: Vec<Frame>,
@@ -349,18 +464,27 @@ impl Session {
             Event::Begin { t, callsite } => self.threads[slot].begin(t, callsite),
             Event::End { t } => self.threads[slot].end(t),
             Event::AsyncBegin { t, callsite, id } => {
-                self.open_async.insert(id, self.async_spans.len());
-                self.async_spans.push(AsyncSpan {
+                let mark = self.threads[slot].stack_mark();
+                let span = AsyncSpan {
                     id,
                     callsite,
                     thread,
                     start: t,
                     end: OPEN,
-                });
+                };
+                self.open_async.insert(id, PendingAsync { span, mark });
             }
             Event::AsyncEnd { t, id } => {
-                if let Some(index) = self.open_async.remove(&id) {
-                    self.async_spans[index].end = t;
+                if let Some(PendingAsync { mut span, mark }) = self.open_async.remove(&id) {
+                    // A scope that may suspend (hotpath's `measure_block!`) but ended
+                    // on its thread with the stack untouched ran nested: it belongs
+                    // in that thread's tree, not in the async lane.
+                    let nested = span.thread == thread
+                        && self.threads[slot].insert_nested(span.start, t, span.callsite, mark);
+                    if !nested {
+                        span.end = t;
+                        self.async_spans.push(span);
+                    }
                 }
             }
             Event::Instant { t, callsite } => {
@@ -494,6 +618,13 @@ impl Session {
         self.thread_index.get(&id).map(|i| &self.threads[*i])
     }
 
+    /// Async spans overlapping `[from, to)`, in begin order.
+    pub fn async_spans_in(&self, from: u64, to: u64) -> impl Iterator<Item = &AsyncSpan> {
+        self.async_spans
+            .iter()
+            .filter(move |s| s.start < to && s.end > from)
+    }
+
     #[must_use]
     pub fn thread_name(&self, id: u32) -> &str {
         self.thread(id).map_or("?", |t| t.name.as_str())
@@ -604,6 +735,7 @@ fn frame_start(spans: &[Span], previous: u64, end: u64) -> u64 {
     let first = spans.partition_point(|s| s.start < previous);
     let last = spans.partition_point(|s| s.start < end);
     let mut start = end;
+    let mut busy = 0;
     // Spans are in begin order on one thread; a recording that repeats data
     // can break that, so a slice that does not make sense means no frame.
     let Some(window) = spans.get(first..last) else {
@@ -614,6 +746,15 @@ fn frame_start(spans: &[Span], previous: u64, end: u64) -> u64 {
         if span_end.saturating_add(IDLE_GAP_NS) < start {
             break;
         }
+        // A trickle of short spans (pointer events handled between redraws)
+        // has small gaps but is mostly idle: stop once taking the next span
+        // would leave the frame busy less than half its time.
+        let with = busy + span_end.saturating_sub(span.start);
+        let extent = end.saturating_sub(start.min(span.start));
+        if busy > 0 && with * 2 < extent {
+            break;
+        }
+        busy = with;
         start = start.min(span.start);
     }
     start
@@ -692,6 +833,98 @@ mod tests {
         ]);
         assert_eq!(session.frames[0].start, 60_000);
         assert_eq!(session.frames[0].duration(), 5_000);
+    }
+
+    #[test]
+    fn nested_async_scope_joins_the_thread_tree() {
+        let mut session = Session::default();
+        session.ingest(vec![
+            def(1, "core::render"),
+            def(2, "Element Render"),
+            def(3, "core::from_element"),
+            Record::Batch {
+                thread: 1,
+                events: vec![
+                    Event::Begin { t: 0, callsite: 1 },
+                    Event::AsyncBegin {
+                        t: 10,
+                        callsite: 2,
+                        id: 1,
+                    },
+                    Event::Begin { t: 20, callsite: 3 },
+                    Event::End { t: 30 },
+                    Event::AsyncEnd { t: 40, id: 1 },
+                    Event::End { t: 100 },
+                ],
+            },
+        ]);
+        assert!(session.async_spans.is_empty());
+        let spans = &session.threads[0].spans;
+        let shape: Vec<_> = spans
+            .iter()
+            .map(|s| (s.callsite, s.depth, s.parent, s.self_ns))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![(1, 0, None, 70), (2, 1, Some(0), 20), (3, 2, Some(1), 10)]
+        );
+        assert_eq!(session.threads[0].max_depth, 2);
+    }
+
+    #[test]
+    fn suspended_async_scope_stays_async() {
+        let mut session = Session::default();
+        session.ingest(vec![
+            def(1, "freya::tasks"),
+            def(2, "app::fetch"),
+            Record::Batch {
+                thread: 1,
+                events: vec![
+                    Event::Begin { t: 0, callsite: 1 },
+                    Event::AsyncBegin {
+                        t: 10,
+                        callsite: 2,
+                        id: 1,
+                    },
+                    Event::End { t: 20 },
+                    Event::Begin { t: 50, callsite: 1 },
+                    Event::AsyncEnd { t: 60, id: 1 },
+                    Event::End { t: 70 },
+                ],
+            },
+        ]);
+        assert_eq!(session.async_spans.len(), 1);
+        assert_eq!(session.async_spans[0].duration(u64::MAX), 50);
+        assert!(session.threads[0].spans.iter().all(|s| s.callsite == 1));
+    }
+
+    #[test]
+    fn frame_skips_a_trickle_of_events_before_the_redraw() {
+        let mut session = Session::default();
+        let mut events = vec![Event::Frame { t: 0 }];
+        // Pointer events every 2 ms for 100 ms, 10 us each, no redraw.
+        for i in 0..50u64 {
+            let t = 1_000_000 + i * 2_000_000;
+            events.push(Event::Begin { t, callsite: 1 });
+            events.push(Event::End { t: t + 10_000 });
+        }
+        // Then the redraw: 3 ms of work right before the mark.
+        events.extend([
+            Event::Begin {
+                t: 101_000_000,
+                callsite: 2,
+            },
+            Event::End { t: 104_000_000 },
+            Event::Frame { t: 104_100_000 },
+        ]);
+        session.ingest(vec![
+            def(1, "freya::events"),
+            def(2, "freya::frame"),
+            Record::Batch { thread: 1, events },
+        ]);
+        // The event right before the redraw stays, it likely triggered it; the
+        // 98 ms of idle trickle before it does not.
+        assert_eq!(session.frames[0].start, 99_000_000);
     }
 
     #[test]

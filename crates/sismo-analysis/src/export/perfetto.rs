@@ -1,5 +1,6 @@
 //! Minimal protobuf writer for the Perfetto `Trace` format: one track per
-//! thread, slices for spans, instants for logs and markers, counter tracks.
+//! thread, slices for spans, one track per async span, instants for logs and
+//! markers, counter tracks.
 
 use std::io::{self, Write};
 
@@ -10,6 +11,8 @@ const SEQUENCE: u64 = 1;
 const PROCESS_TRACK: u64 = 1;
 const THREAD_TRACK_BASE: u64 = 1_000;
 const COUNTER_TRACK_BASE: u64 = 1_000_000;
+/// Async spans overlap freely, so each gets its own track under the process.
+const ASYNC_TRACK_BASE: u64 = 1 << 40;
 
 const SLICE_BEGIN: u64 = 1;
 const SLICE_END: u64 = 2;
@@ -153,6 +156,30 @@ pub(super) fn write(
                 w.event(ts, &track_event(SLICE_END, track, None))?;
             }
         }
+    }
+
+    for span in session.async_spans_in(from, to) {
+        if !options
+            .query
+            .matches_span(session, session.thread_name(span.thread), &span.as_span())
+        {
+            continue;
+        }
+        let track = ASYNC_TRACK_BASE + span.id;
+        let name = session.name(span.callsite);
+        let mut descriptor = Proto::default();
+        descriptor
+            .uint(1, track)
+            .uint(5, PROCESS_TRACK)
+            .string(2, name);
+        w.descriptor(&descriptor)?;
+        let mut begin = track_event(SLICE_BEGIN, track, Some(name));
+        begin.string(22, session.crate_of(span.callsite));
+        w.event(session.unix_ns(span.start), &begin)?;
+        w.event(
+            session.unix_ns(span.end.min(session.end)),
+            &track_event(SLICE_END, track, None),
+        )?;
     }
 
     if options.include_logs {
