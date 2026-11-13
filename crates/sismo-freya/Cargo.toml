@@ -7,6 +7,13 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = ["hotpath"]
+# Records every `#[hotpath::measure]` scope through hotpath's function sink, so
+# apps get it by adding the plugin. Freya's own measures join once Freya
+# depends on a hotpath release with the sink (rc.13 is on 0.29).
+hotpath = ["sismo/hotpath"]
+
 [dependencies]
 sismo.workspace = true
 freya-winit.workspace = true
@@ -14,3 +21,9 @@ freya-core.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+freya = { workspace = true, features = ["hotpath"] }
+hotpath.workspace = true
+sismo = { workspace = true, features = ["net", "tracing"] }
+tracing-subscriber.workspace = true

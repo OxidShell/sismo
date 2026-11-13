@@ -1,6 +1,9 @@
 //! Freya plugin feeding sismo with frame marks, render phases and tree
 //! metrics, so recordings split time between the app and Freya itself.
 //!
+//! The default `hotpath` feature also records every `#[hotpath::measure]` scope
+//! through hotpath's function sink, from `sismo::install` on.
+//!
 //! ```ignore
 //! let config = LaunchConfig::new().with_plugin(sismo_freya::SismoPlugin::default());
 //! ```
@@ -41,6 +44,15 @@ impl Phase {
             Phase::Tasks => phase!("freya::tasks"),
             Phase::Events => phase!("freya::events"),
         }
+    }
+}
+
+/// Marker text for the renderer Freya picked, e.g. `freya: window created ·
+/// vulkan (AMD Radeon)`.
+fn renderer_note(what: &str, driver: &str, gpu: Option<&str>) -> String {
+    match gpu {
+        Some(gpu) => format!("freya: {what} · {driver} ({gpu})"),
+        None => format!("freya: {what} · {driver}"),
     }
 }
 
@@ -105,6 +117,20 @@ impl FreyaPlugin for SismoPlugin {
             PluginEvent::AfterPresenting { .. } => self.finish(Phase::Present),
             PluginEvent::BeforeAccessibility { .. } => self.start(Phase::Accessibility),
             PluginEvent::AfterAccessibility { .. } => self.finish(Phase::Accessibility),
+            PluginEvent::WindowCreated {
+                graphics_driver,
+                gpu_name,
+                ..
+            } => sismo::marker(&renderer_note("window created", graphics_driver, *gpu_name)),
+            PluginEvent::GraphicsDriverChanged {
+                graphics_driver,
+                gpu_name,
+                ..
+            } => sismo::marker(&renderer_note(
+                "graphics driver changed",
+                graphics_driver,
+                *gpu_name,
+            )),
             PluginEvent::AfterRedraw { .. } => {
                 self.finish(Phase::Frame);
                 sismo::frame_mark();
