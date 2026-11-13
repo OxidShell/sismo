@@ -22,6 +22,12 @@ fn last_token(text: &str) -> &str {
     text.rsplit(char::is_whitespace).next().unwrap_or("")
 }
 
+/// Whether the token being typed still lacks its value (`level:`, `dur>`):
+/// the suggestions guide it, so its parse error would only be noise.
+fn pending(text: &str) -> bool {
+    !text.ends_with(char::is_whitespace) && last_token(text).ends_with([':', '>', '<', '='])
+}
+
 fn values(session: &Session, key: &str, prefix: &str) -> Vec<Suggestion> {
     let prefix_lower = prefix.to_lowercase();
     let matches = |v: &str| v.to_lowercase().contains(&prefix_lower);
@@ -320,7 +326,10 @@ impl Component for QueryBar {
             }
         });
 
-        let popup = (focused && !list.is_empty()).then(|| {
+        let error = error.filter(|_| !(focused && pending(&text_state.read())));
+        let popup_error = error.clone();
+        let popup_open = focused && !list.is_empty();
+        let popup = popup_open.then(|| {
             rect()
                 .position(Position::new_absolute().top(34.).left(0.))
                 .layer(Layer::Overlay)
@@ -335,6 +344,15 @@ impl Component for QueryBar {
                         .blur(24.)
                         .color(Color::from_argb(90, 0, 0, 0)),
                 )
+                .maybe_child(popup_error.map(|e| {
+                    rect()
+                        .width(Size::fill())
+                        .padding((6., 8.))
+                        .margin((0., 0., 4., 0.))
+                        .corner_radius(4.)
+                        .background(theme::color(theme::REC_DIM))
+                        .child(text(e, 11., theme::ERROR))
+                }))
                 .child(rect().padding((6., 6., 4., 6.)).child(caption(
                     &if last_token(&text_state.read()).contains(':') {
                         tr!("query-values")
@@ -411,7 +429,7 @@ impl Component for QueryBar {
                         )
                     }),
             )
-            .maybe_child(error.filter(|_| focused).map(|e| {
+            .maybe_child(error.filter(|_| focused && !popup_open).map(|e| {
                 rect()
                     .position(Position::new_absolute().top(34.).left(0.))
                     .layer(Layer::Overlay)
