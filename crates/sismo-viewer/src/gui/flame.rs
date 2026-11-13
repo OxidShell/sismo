@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 use sismo_analysis::units::{Nanos, Percent};
-use sismo_analysis::{FlameNode, Group, GroupSplit, Session};
+use sismo_analysis::{FlameNode, Group, GroupSplit, Query, Session};
 
 use super::Workspace;
 use super::draw::Scene;
@@ -475,6 +475,106 @@ fn aggregate(view: &SessionView, query: &sismo_analysis::Query) -> Aggregate {
     })
 }
 
+/// One async callsite in the window: wall time from first poll to completion.
+struct AsyncRow {
+    callsite: u32,
+    calls: u64,
+    total_ns: u64,
+    max_ns: u64,
+}
+
+/// Async spans grouped by callsite, longest total first. Few enough to
+/// rebuild on every render.
+fn async_rows(view: &SessionView, query: &Query) -> Vec<AsyncRow> {
+    let session = &view.session;
+    let (from, to) = view.window();
+    let mut rows: Vec<AsyncRow> = Vec::new();
+    for span in session.async_spans_in(from, to) {
+        if span.is_open()
+            || !query.matches_span(session, session.thread_name(span.thread), &span.as_span())
+        {
+            continue;
+        }
+        let duration = span.duration(session.end);
+        match rows.iter_mut().find(|r| r.callsite == span.callsite) {
+            Some(row) => {
+                row.calls += 1;
+                row.total_ns += duration;
+                row.max_ns = row.max_ns.max(duration);
+            }
+            None => rows.push(AsyncRow {
+                callsite: span.callsite,
+                calls: 1,
+                total_ns: duration,
+                max_ns: duration,
+            }),
+        }
+    }
+    rows.sort_by_key(|r| std::cmp::Reverse(r.total_ns));
+    rows
+}
+
+/// Async spans under the icicle, on a scale of their own: wall time is mostly
+/// waiting, so adding it to the thread time above would distort every share.
+fn async_section(ws: State<Workspace>, view: &SessionView, query: &Query) -> Option<Rect> {
+    /// Width of the longest bar.
+    const BAR_W: f32 = 360.;
+    let rows = async_rows(view, query);
+    let longest = rows.first()?.total_ns.max(1);
+    let session = &view.session;
+    Some(
+        rect()
+            .width(Size::fill())
+            .padding((12., 16.))
+            .spacing(4.)
+            .child(caption(&tr!("flame-async-title")))
+            .children(rows.into_iter().map(|row| {
+                let callsite = row.callsite;
+                #[allow(clippy::cast_precision_loss)]
+                let width = (row.total_ns as f32 / longest as f32 * BAR_W).max(2.);
+                rect()
+                    .width(Size::fill())
+                    .horizontal()
+                    .cross_align(Alignment::Center)
+                    .spacing(12.)
+                    .padding((4., 0.))
+                    .cursor(CursorIcon::Pointer)
+                    .on_press(move |_| {
+                        let mut ws = ws;
+                        if let Some(v) = ws.write().active_mut() {
+                            v.selected_function = Some(callsite);
+                            v.selected_async = true;
+                            v.tab = Tab::Functions;
+                        }
+                    })
+                    .child(
+                        mono(session.name(callsite).to_owned(), 12., theme::TEXT)
+                            .width(Size::px(280.)),
+                    )
+                    .child(
+                        rect().width(Size::px(BAR_W)).child(
+                            rect()
+                                .width(Size::px(width))
+                                .height(Size::px(12.))
+                                .corner_radius(3.)
+                                .background(theme::color(theme::group(session.group_of(callsite)))),
+                        ),
+                    )
+                    .child(mono(
+                        tr!(
+                            "flame-async-calls",
+                            calls = row.calls.to_string(),
+                            total = Nanos(row.total_ns).to_string(),
+                            max = Nanos(row.max_ns).to_string(),
+                        ),
+                        11.,
+                        theme::TEXT2,
+                    ))
+                    .into_element()
+            })),
+    )
+}
+
 pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
     let session = &view.session;
     let query = view.effective_query();
@@ -628,7 +728,12 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                         .width(Size::flex(1.))
                         .height(Size::fill())
                         .content(Content::flex())
-                        .child(ScrollView::new().height(Size::flex(1.)).child(canvas))
+                        .child(
+                            ScrollView::new()
+                                .height(Size::flex(1.))
+                                .child(canvas)
+                                .maybe_child(async_section(ws, view, &query)),
+                        )
                         .child(hline())
                         .child(split_bar(split)),
                 )

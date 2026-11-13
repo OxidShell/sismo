@@ -142,6 +142,8 @@ flame-window-session = whole session
 flame-icicle = Icicle
 flame-aggregate = aggregated · { $window } · { $threads } threads
 flame-hint = width = share of time · click = zoom in · click the top bar or empty space = zoom out · right click = menu
+flame-async-title = Async · wall time, first poll to completion, not part of the total above
+flame-async-calls = { $calls } calls · total { $total } · max { $max }
 flame-root = All
 flame-up = Up one level  Esc
 

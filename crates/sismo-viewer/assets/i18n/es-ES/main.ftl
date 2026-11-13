@@ -142,6 +142,8 @@ flame-window-session = toda la sesión
 flame-icicle = Icicle
 flame-aggregate = agregado · { $window } · { $threads } hilos
 flame-hint = ancho = parte del tiempo · clic = acercar · clic en la barra de arriba o en vacío = alejar · clic derecho = menú
+flame-async-title = Async · tiempo de pared, del primer poll al final, no suma al total de arriba
+flame-async-calls = { $calls } llamadas · total { $total } · máx { $max }
 flame-root = Todo
 flame-up = Subir un nivel  Esc
 
