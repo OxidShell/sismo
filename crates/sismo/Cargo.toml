@@ -17,6 +17,8 @@ alloc = []
 net = ["dep:zudp", "dep:tokio"]
 # Per-OS default directories for crash reports and viewer keys.
 istmo = ["dep:istmo-core"]
+# Records every `#[hotpath::measure]` scope through hotpath's function sink.
+hotpath = ["dep:hotpath", "hotpath/hotpath-sink"]
 
 [dependencies]
 sismo-format.workspace = true
@@ -30,6 +32,7 @@ libc = { workspace = true, optional = true }
 zudp = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 istmo-core = { workspace = true, optional = true }
+hotpath = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 libc.workspace = true
@@ -37,6 +40,7 @@ libc.workspace = true
 [dev-dependencies]
 log.workspace = true
 tracing-subscriber = { workspace = true }
+hotpath.workspace = true
 
 [lints]
 workspace = true
@@ -48,3 +52,7 @@ required-features = ["log"]
 [[test]]
 name = "record"
 required-features = ["log"]
+
+[[test]]
+name = "hotpath_bridge"
+required-features = ["hotpath"]

@@ -10,6 +10,11 @@ pub(crate) static ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Bumped whenever the filter changes so cached callsite decisions refresh.
 static FILTER_GENERATION: AtomicU32 = AtomicU32::new(1);
 
+#[cfg(feature = "hotpath")]
+pub(crate) fn filter_generation() -> u32 {
+    FILTER_GENERATION.load(Ordering::Acquire)
+}
+
 static REGISTRY: OnceLock<Registry> = OnceLock::new();
 
 pub(crate) fn registry() -> &'static Registry {
@@ -45,10 +50,15 @@ pub(crate) struct Registry {
     start: Instant,
     defs: Mutex<Definitions>,
     #[cfg_attr(
-        not(any(feature = "log", feature = "tracing", feature = "stdio")),
+        not(any(
+            feature = "log",
+            feature = "tracing",
+            feature = "stdio",
+            feature = "hotpath"
+        )),
         allow(
             dead_code,
-            reason = "only the log, tracing and stdio bridges add runtime callsites"
+            reason = "only the log, tracing, stdio and hotpath bridges add runtime callsites"
         )
     )]
     dynamic: RwLock<HashMap<DynamicKey, u32>>,
@@ -137,10 +147,15 @@ impl Registry {
     /// Interns a callsite known only at runtime (log records, tracing
     /// metadata, stdio lines).
     #[cfg_attr(
-        not(any(feature = "log", feature = "tracing", feature = "stdio")),
+        not(any(
+            feature = "log",
+            feature = "tracing",
+            feature = "stdio",
+            feature = "hotpath"
+        )),
         allow(
             dead_code,
-            reason = "only the log, tracing and stdio bridges add runtime callsites"
+            reason = "only the log, tracing, stdio and hotpath bridges add runtime callsites"
         )
     )]
     pub fn register_dynamic(&self, key: DynamicKey, module_path: &str, level: Level) -> u32 {

@@ -32,6 +32,8 @@ mod thread;
 
 #[cfg(feature = "alloc")]
 pub mod alloc;
+#[cfg(feature = "hotpath")]
+mod hotpath_sink;
 #[cfg(feature = "log")]
 pub mod log;
 #[cfg(feature = "net")]

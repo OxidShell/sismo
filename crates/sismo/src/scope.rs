@@ -8,6 +8,11 @@ use crate::thread::record;
 
 static NEXT_ASYNC_ID: AtomicU64 = AtomicU64::new(1);
 
+/// A fresh id for one async span; ids start at 1.
+pub(crate) fn next_async_id() -> u64 {
+    NEXT_ASYNC_ID.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Records a span from creation until drop on the current thread.
 #[derive(Debug)]
 #[must_use = "the span ends when the guard is dropped"]
@@ -92,7 +97,7 @@ impl<F: Future> Future for Instrumented<F> {
             this.started = true;
             if ACTIVE.load(Ordering::Relaxed) && this.callsite.enabled() {
                 let callsite = this.callsite.id();
-                let id = NEXT_ASYNC_ID.fetch_add(1, Ordering::Relaxed);
+                let id = next_async_id();
                 this.id = id;
                 record(|w, t| w.async_begin(t, callsite, id));
             }

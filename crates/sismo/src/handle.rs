@@ -106,6 +106,8 @@ fn start(config: Config) -> Result<Handle, InstallError> {
     let filter = Filter::parse(&config.filter)?;
     let registry = registry();
     registry.set_filter(filter);
+    #[cfg(feature = "hotpath")]
+    crate::hotpath_sink::install();
     #[cfg(feature = "log")]
     crate::log::refresh_max_level();
     let started = unix_ns();
