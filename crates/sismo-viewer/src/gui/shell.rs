@@ -476,6 +476,11 @@ fn status_bar(mut ws: State<Workspace>, view: &SessionView) -> Rect {
 
 fn waiting(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
     let live = view.live()?;
+    // Once data arrived, connection trouble is a banner over it: replacing
+    // the screen would interrupt whoever is reading the recording.
+    if view.session.events > 0 {
+        return None;
+    }
     let (title, body, retry) = match &live.status {
         LiveStatus::Connecting => (
             tr!("shell-waiting-connecting"),
@@ -489,10 +494,8 @@ fn waiting(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
                 .unwrap_or_else(|| tr!("shell-waiting-pairing-body")),
             false,
         ),
-        LiveStatus::Lost { reason, .. } if view.session.events == 0 => {
-            (tr!("shell-waiting-lost"), reason.clone(), true)
-        }
-        _ => return None,
+        LiveStatus::Lost { reason, .. } => (tr!("shell-waiting-lost"), reason.clone(), true),
+        LiveStatus::Streaming => return None,
     };
     Some(
         rect()
@@ -561,6 +564,49 @@ fn banner(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
                         let _ = v.reconnect();
                     }
                 }))
+                .child(button(
+                    tr!("shell-save-received"),
+                    Kind::Secondary,
+                    move |_| dialogs::save_received(ws),
+                )),
+        );
+    }
+    let until = Clock(view.session.span().1).to_string();
+    let reconnecting = match &live.status {
+        LiveStatus::Connecting => Some((
+            tr!(
+                "shell-reconnecting-banner",
+                addr = live.addr.to_string(),
+                until = until.as_str(),
+            ),
+            false,
+        )),
+        LiveStatus::NeedsPairing { rejected } => Some((
+            rejected
+                .clone()
+                .unwrap_or_else(|| tr!("shell-pairing-banner", until = until.as_str())),
+            true,
+        )),
+        LiveStatus::Streaming | LiveStatus::Lost { .. } => None,
+    };
+    if let Some((message, pairing)) = reconnecting {
+        return Some(
+            rect()
+                .width(Size::fill())
+                .horizontal()
+                .content(Content::flex())
+                .cross_align(Alignment::Center)
+                .padding((6., 16.))
+                .spacing(8.)
+                .background(theme::color(theme::WARN_DIM))
+                .child(text(message, 12., theme::TEXT).width(Size::flex(1.)))
+                .maybe(pairing, |r| {
+                    r.child(button(tr!("shell-enter-code"), Kind::Primary, move |_| {
+                        ws.write().dialog = Some(Dialog::Pair {
+                            code: String::new(),
+                        });
+                    }))
+                })
                 .child(button(
                     tr!("shell-save-received"),
                     Kind::Secondary,
