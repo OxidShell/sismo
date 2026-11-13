@@ -2,7 +2,9 @@
 
 use freya::prelude::*;
 
+use super::Workspace;
 use super::theme::{self, Rgb};
+use crate::workspace::HoverTip;
 
 /// Button flavours from the design system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10,6 +12,39 @@ pub enum Kind {
     Primary,
     Secondary,
     Danger,
+}
+
+/// Shows `tip` on `canvas`, or clears that canvas's tip. The workspace is
+/// written only when the element under the pointer changes, not on every
+/// pointer move.
+pub fn set_hover(mut ws: State<Workspace>, canvas: &'static str, tip: Option<HoverTip>) {
+    let same = |current: Option<&HoverTip>| match (current, &tip) {
+        (Some(a), Some(b)) => a.canvas == b.canvas && a.key == b.key,
+        (Some(a), None) => a.canvas != canvas,
+        (None, None) => true,
+        (None, Some(_)) => false,
+    };
+    if ws.peek().active().is_none_or(|v| same(v.hover.as_ref())) {
+        return;
+    }
+    if let Some(v) = ws.write().active_mut() {
+        v.hover = tip;
+    }
+}
+
+/// Floating card with the name and timing of a canvas element too small to
+/// show its own label; the parent canvas positions it.
+pub fn hover_tip(tip: &HoverTip) -> Rect {
+    rect()
+        .position(Position::new_absolute().top(tip.y).left(tip.x))
+        .layer(Layer::Overlay)
+        .padding((6., 8.))
+        .spacing(2.)
+        .corner_radius(6.)
+        .background(theme::color(theme::BG1))
+        .border(bordered(theme::LINE2))
+        .child(mono(tip.name.clone(), 12., theme::TEXT))
+        .child(mono(tip.detail.clone(), 11., theme::TEXT2))
 }
 
 /// Text in the UI face.

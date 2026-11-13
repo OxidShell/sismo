@@ -113,6 +113,7 @@ timeline-span-location = { $file }:{ $line }   ·   crate { $krate } ({ $group }
 timeline-duration = Duration
 timeline-self-time = Self time
 timeline-children = Children
+timeline-async-lane = async · first poll to completion, across threads
 timeline-start = Start
 timeline-allocs = Allocs
 timeline-open-in-flamegraph = Open in Flamegraph

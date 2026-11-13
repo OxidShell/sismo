@@ -7,14 +7,18 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 use sismo_analysis::units::{Clock, Nanos};
-use sismo_analysis::{FrameSummary, Group, GroupSplit, Query, SLOW_FRAME_NS, Session, percentile};
+use sismo_analysis::{
+    AsyncSpan, FrameSummary, Group, GroupSplit, Query, SLOW_FRAME_NS, Session, percentile,
+};
 
 use super::Workspace;
 use super::draw::Scene;
 use super::i18n::tr;
 use super::theme::{self, Rgb};
-use super::widgets::{Kind, button, caption, hline, mono, swatch, text, tool};
-use crate::workspace::{SessionView, Tab};
+use super::widgets::{
+    Kind, button, caption, hline, hover_tip, mono, set_hover, swatch, text, tool,
+};
+use crate::workspace::{HoverTip, SessionView, Tab};
 
 const STRIP_H: f32 = 150.;
 const RULER_H: f32 = 28.;
@@ -231,6 +235,128 @@ fn lanes(view: &SessionView) -> (Vec<Lane>, f32) {
         y += 18. + f32::from(rows) * ROW_H + LANE_GAP;
     }
     (out, y.max(120.))
+}
+
+/// Async spans, packed into rows so overlapping ones stack. They run from
+/// first poll to completion and may hop threads, so they get a lane of their
+/// own below the threads instead of a row in one.
+#[derive(Debug, Clone)]
+struct AsyncLane {
+    top: f32,
+    rows: u16,
+    /// Index into the session's async spans and the row it sits on.
+    placed: Vec<(usize, u16)>,
+}
+
+impl AsyncLane {
+    /// Spans past this many overlapping ones share the last row.
+    const MAX_ROWS: usize = 8;
+
+    fn new(view: &SessionView, y: f32) -> Option<Self> {
+        let (from, to) = view.view;
+        let mut row_ends: Vec<u64> = Vec::new();
+        let mut placed = Vec::new();
+        for (index, span) in view.session.async_spans.iter().enumerate() {
+            if span.start >= to || span.end <= from {
+                continue;
+            }
+            let row = row_ends
+                .iter()
+                .position(|&end| end <= span.start)
+                .unwrap_or_else(|| {
+                    if row_ends.len() < Self::MAX_ROWS {
+                        row_ends.push(0);
+                    }
+                    row_ends.len() - 1
+                });
+            row_ends[row] = row_ends[row].max(span.end);
+            placed.push((index, u16::try_from(row).unwrap_or(u16::MAX)));
+        }
+        let rows = u16::try_from(row_ends.len()).ok().filter(|&r| r > 0)?;
+        Some(Self {
+            top: y + 18.,
+            rows,
+            placed,
+        })
+    }
+
+    fn height(&self) -> f32 {
+        18. + f32::from(self.rows) * ROW_H + LANE_GAP
+    }
+
+    /// Index of the async span drawn under `(x, y)`, with a 3 px slop so thin
+    /// spans stay reachable.
+    fn hit(&self, spans: &[AsyncSpan], scale: Scale, x: f32, y: f32) -> Option<usize> {
+        if y < self.top || y >= self.top + f32::from(self.rows) * ROW_H {
+            return None;
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let row = ((y - self.top) / ROW_H) as u16;
+        let (from, to) = (scale.t(f64::from(x - 3.)), scale.t(f64::from(x + 3.)));
+        self.placed
+            .iter()
+            .rev()
+            .find(|&&(index, r)| {
+                r == row
+                    && spans
+                        .get(index)
+                        .is_some_and(|s| s.start <= to && s.end >= from)
+            })
+            .map(|&(index, _)| index)
+    }
+
+    fn draw(&self, p: &mut Scene, view: &SessionView, query: &Query, w: f32) {
+        let session = &view.session;
+        let scale = Scale {
+            from: view.view.0,
+            to: view.view.1,
+            left: PAD,
+            width: w - 2. * PAD,
+        };
+        let filtering = !query.groups.is_empty();
+        p.text(
+            &tr!("timeline-async-lane"),
+            PAD,
+            self.top - 17.,
+            11.,
+            theme::TEXT2,
+            false,
+            300.,
+        );
+        for &(index, row) in &self.placed {
+            let Some(span) = session.async_spans.get(index) else {
+                continue;
+            };
+            let x0 = scale.x(span.start).max(PAD);
+            let x1 = scale.x(span.end.min(session.end)).min(w - PAD);
+            let width = (x1 - x0).max(1.);
+            let y = self.top + f32::from(row) * ROW_H;
+            let rgb = group_color(session, span.callsite);
+            let matches = !filtering
+                || query.matches_span(session, session.thread_name(span.thread), &span.as_span());
+            if matches {
+                p.rect(x0, y, (width - 1.).max(1.), ROW_H - 2., rgb);
+            } else {
+                p.rect_alpha(x0, y, (width - 1.).max(1.), ROW_H - 2., rgb, 50);
+            }
+            if width > 60. {
+                let label = format!(
+                    "{}  {}",
+                    session.name(span.callsite),
+                    Nanos(span.duration(session.end))
+                );
+                p.text(
+                    &label,
+                    x0 + 6.,
+                    y + 3.,
+                    11.,
+                    if matches { theme::BG0 } else { theme::TEXT3 },
+                    true,
+                    width - 12.,
+                );
+            }
+        }
+    }
 }
 
 fn group_color(session: &Session, callsite: u32) -> Rgb {
@@ -580,6 +706,61 @@ fn hit_span(view: &SessionView, lanes: &[Lane], w: f32, x: f64, y: f64) -> Optio
         .map(|i| (lane.thread, i))
 }
 
+/// Spans narrower than this many pixels draw without their name.
+const LABEL_MIN_W: f32 = 60.;
+/// Width the hover tip may take, to keep it inside the canvas.
+const TIP_W: f32 = 320.;
+
+/// The tip for the unlabeled span under the pointer, if any: thread spans
+/// first, then the async lane below them.
+fn hover_at(view: &SessionView, w: f32, x: f64, y: f64) -> Option<HoverTip> {
+    let session = &view.session;
+    let scale = Scale {
+        from: view.view.0,
+        to: view.view.1,
+        left: PAD,
+        width: w - 2. * PAD,
+    };
+    let px = |start: u64, end: u64| scale.x(end.min(session.end)) - scale.x(start);
+    #[allow(clippy::cast_possible_truncation)]
+    let (fx, fy) = (x as f32, y as f32);
+    let tip = |key: u64, name: &str, detail: String| HoverTip {
+        canvas: "lanes",
+        key,
+        x: (fx + 12.).min(w - TIP_W).max(0.),
+        y: fy + 14.,
+        name: name.to_owned(),
+        detail,
+    };
+    let (lane_list, threads_h) = lanes(view);
+    if let Some((thread, index)) = hit_span(view, &lane_list, w, x, y) {
+        let span = session.thread(thread)?.spans.get(index as usize)?;
+        if px(span.start, span.end) > LABEL_MIN_W {
+            return None;
+        }
+        return Some(tip(
+            (u64::from(thread) << 32) | u64::from(index),
+            session.name(span.callsite),
+            format!(
+                "{} · {}",
+                Nanos(span.duration(session.end)),
+                session.thread_name(thread)
+            ),
+        ));
+    }
+    let lane = AsyncLane::new(view, threads_h)?;
+    let index = lane.hit(&session.async_spans, scale, fx, fy)?;
+    let span = session.async_spans.get(index)?;
+    if px(span.start, span.end) > LABEL_MIN_W {
+        return None;
+    }
+    Some(tip(
+        u64::MAX - span.id,
+        session.name(span.callsite),
+        format!("async · {}", Nanos(span.duration(session.end))),
+    ))
+}
+
 /// Zooms the visible range by `factor` around `t`.
 fn zoom(view: &mut SessionView, t: u64, factor: f64) {
     let (from, to) = view.view;
@@ -769,6 +950,7 @@ fn detail(mut ws: State<Workspace>, view: &SessionView) -> Option<Rect> {
                                 move |_| {
                                     if let Some(v) = ws.write().active_mut() {
                                         v.selected_function = Some(callsite);
+                                        v.selected_async = false;
                                         v.tab = Tab::Functions;
                                     }
                                 },
@@ -887,7 +1069,9 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
     let summary = frame_summary(view);
     let strip_w = view.canvas.get("strip").map_or(1000., |s| s.0);
     let lanes_w = view.canvas.get("lanes").map_or(1000., |s| s.0);
-    let (lane_list, lanes_h) = lanes(view);
+    let (lane_list, threads_h) = lanes(view);
+    let async_lane = AsyncLane::new(view, threads_h);
+    let lanes_h = threads_h + async_lane.as_ref().map_or(0., AsyncLane::height);
 
     let strip_paint = scene(strip_w, STRIP_H, |p, w, h| {
         draw_strip(p, view, &splits, w, h);
@@ -895,6 +1079,9 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
     let ruler_paint = scene(lanes_w, RULER_H, |p, w, _| draw_ruler(p, view, w));
     let lanes_paint = scene(lanes_w, lanes_h, |p, w, h| {
         draw_lanes(p, view, &query, &lane_list, w, h);
+        if let Some(lane) = &async_lane {
+            lane.draw(p, view, &query, w);
+        }
     });
 
     let frames_header = rect()
@@ -1034,6 +1221,13 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             }
         })
         .background(lanes_paint)
+        .maybe_child(
+            view.hover
+                .as_ref()
+                .filter(|tip| tip.canvas == "lanes")
+                .map(hover_tip),
+        )
+        .on_pointer_leave(move |_| set_hover(ws, "lanes", None))
         .on_mouse_down(move |e: Event<MouseEventData>| {
             if e.button != Some(MouseButton::Right) {
                 return;
@@ -1058,6 +1252,7 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             };
             v.selected_span = Some((thread, index));
             v.selected_function = Some(callsite);
+            v.selected_async = false;
             w.menu = Some(super::context_menu::MenuTarget {
                 callsite,
                 thread: Some(thread),
@@ -1099,6 +1294,12 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
         })
         .on_pointer_move(move |e: Event<PointerEventData>| {
             let Some(drag) = DRAG.with(|d| *d.borrow()) else {
+                let loc = e.element_location();
+                let tip = ws
+                    .peek()
+                    .active()
+                    .and_then(|v| hover_at(v, lanes_w, loc.x, loc.y));
+                set_hover(ws, "lanes", tip);
                 return;
             };
             let DragKind::Pan { view: start } = drag.kind else {
@@ -1147,6 +1348,7 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                 && let Some(span) = v.session.thread(t).and_then(|th| th.spans.get(i as usize))
             {
                 v.selected_function = Some(span.callsite);
+                v.selected_async = false;
             }
             v.revision += 1;
         });

@@ -255,7 +255,7 @@ fn functions(args: &FileArgs, sort: &str, limit: usize) -> Result<(), CliError> 
     for row in rows {
         println!(
             "{:<56} {:<10} {:>8} {:>11} {:>11} {:>10} {:>10} {:>10} {:>10}",
-            truncate(&row.name, 56),
+            truncate(&row.label(), 56),
             row.group.as_str(),
             row.calls,
             Nanos(row.self_ns).to_string(),

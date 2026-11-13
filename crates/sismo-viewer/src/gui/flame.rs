@@ -14,17 +14,64 @@ use super::draw::Scene;
 use super::i18n::tr;
 use super::theme;
 use super::timeline::scene;
-use super::widgets::{Kind, button, caption, hline, mono, swatch, text, tool, vline};
-use crate::workspace::{SessionView, Tab};
+use super::widgets::{
+    Kind, button, caption, hline, hover_tip, mono, set_hover, swatch, text, tool, vline,
+};
+use crate::workspace::{HoverTip, SessionView, Tab};
 
 const ROW_H: f32 = 22.;
 const PAD: f32 = 16.;
 
-type Hit = (f32, f32, f32, Vec<u32>);
+/// One drawn node rectangle, for clicks and the hover tip.
+#[derive(Debug, Clone)]
+struct Hit {
+    x: f32,
+    y: f32,
+    w: f32,
+    path: Vec<u32>,
+    total_ns: u64,
+    share: f64,
+    /// Whether the node was wide enough to draw its own label.
+    labeled: bool,
+}
+
+impl Hit {
+    fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + ROW_H
+    }
+}
+
+/// Nodes narrower than this many pixels draw without their name.
+const LABEL_MIN_W: f32 = 50.;
 
 thread_local! {
-    /// Last drawn node rectangles per session (`x, y, w, path`), for clicks.
+    /// Last drawn node rectangles per session, for clicks and the hover tip.
     static HITS: RefCell<HashMap<u64, Vec<Hit>>> = RefCell::new(HashMap::new());
+}
+
+/// Width the hover tip may take, to keep it inside the canvas.
+const TIP_W: f32 = 320.;
+
+/// The tip for the unlabeled node under the pointer in session `id`, if any.
+fn hover_at(session: &Session, id: u64, w: f32, x: f32, y: f32) -> Option<HoverTip> {
+    HITS.with(|h| {
+        let hits = h.borrow();
+        let hit = hits.get(&id)?.iter().find(|hit| hit.contains(x, y))?;
+        if hit.labeled {
+            return None;
+        }
+        let callsite = *hit.path.last()?;
+        let mut key = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(&hit.path, &mut key);
+        Some(HoverTip {
+            canvas: "flame",
+            key: std::hash::Hasher::finish(&key),
+            x: (x + 12.).min(w - TIP_W).max(0.),
+            y: y + 14.,
+            name: session.name(callsite).to_owned(),
+            detail: format!("{} · {}", Nanos(hit.total_ns), Percent(hit.share)),
+        })
+    })
 }
 
 fn focused<'a>(root: &'a FlameNode, path: &[u32]) -> (&'a FlameNode, usize) {
@@ -80,7 +127,15 @@ impl Icicle<'_> {
                 true,
                 width - 12.,
             );
-            hits.push((PAD, y, width, self.focus[..=row].to_vec()));
+            hits.push(Hit {
+                x: PAD,
+                y,
+                w: width,
+                path: self.focus[..=row].to_vec(),
+                total_ns: child.total_ns,
+                share: 100.,
+                labeled: true,
+            });
             node = child;
         }
         #[allow(clippy::cast_precision_loss)]
@@ -111,9 +166,9 @@ impl Icicle<'_> {
             if self.selected == Some(node.callsite) {
                 p.outline(x, y, cw.max(2.), ROW_H - 2., 2., theme::TEXT);
             }
-            if cw > 50. {
-                #[allow(clippy::cast_precision_loss)]
-                let share = node.total_ns as f64 / total as f64 * 100.;
+            #[allow(clippy::cast_precision_loss)]
+            let share = node.total_ns as f64 / total as f64 * 100.;
+            if cw > LABEL_MIN_W {
                 let label = format!("{}  {}", self.session.name(node.callsite), Percent(share));
                 p.text(&label, x + 6., y + 4., 11., theme::BG0, true, cw - 12.);
             }
@@ -126,7 +181,15 @@ impl Icicle<'_> {
                 stack.push((child, cx, w, level + 1, child_path));
                 cx += w;
             }
-            hits.push((x, y, cw, path));
+            hits.push(Hit {
+                x,
+                y,
+                w: cw,
+                path,
+                total_ns: node.total_ns,
+                share,
+                labeled: cw > LABEL_MIN_W,
+            });
         }
         if start.children.is_empty() {
             p.text(
@@ -342,6 +405,7 @@ fn breadcrumbs(mut ws: State<Workspace>, session: &Session, focus: &[u32]) -> Re
         move |_| {
             if let Some(v) = ws.write().active_mut() {
                 v.selected_function = path.last().copied();
+                v.selected_async = false;
                 v.flame_focus.clone_from(&path);
                 v.revision += 1;
             }
@@ -451,6 +515,23 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             }
         })
         .background(paint)
+        .maybe_child(
+            view.hover
+                .as_ref()
+                .filter(|tip| tip.canvas == "flame")
+                .map(hover_tip),
+        )
+        .on_pointer_move(move |e: Event<PointerEventData>| {
+            let loc = e.element_location();
+            #[allow(clippy::cast_possible_truncation)]
+            let (x, y) = (loc.x as f32, loc.y as f32);
+            let tip = ws
+                .peek()
+                .active()
+                .and_then(|v| hover_at(&v.session, id, width, x, y));
+            set_hover(ws, "flame", tip);
+        })
+        .on_pointer_leave(move |_| set_hover(ws, "flame", None))
         .on_mouse_down(move |e: Event<MouseEventData>| {
             if e.button != Some(MouseButton::Right) {
                 return;
@@ -460,10 +541,8 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             let hit = HITS.with(|h| {
                 h.borrow().get(&id).and_then(|list| {
                     list.iter()
-                        .find(|(hx, hy, hw, _)| {
-                            x >= *hx && x < hx + hw && y >= *hy && y < hy + ROW_H
-                        })
-                        .and_then(|(_, _, _, path)| path.last().copied())
+                        .find(|hit| hit.contains(x, y))
+                        .and_then(|hit| hit.path.last().copied())
                 })
             });
             if let Some(callsite) = hit {
@@ -483,10 +562,8 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             let hit = HITS.with(|h| {
                 h.borrow().get(&id).and_then(|list| {
                     list.iter()
-                        .find(|(hx, hy, hw, _)| {
-                            x >= *hx && x < hx + hw && y >= *hy && y < hy + ROW_H
-                        })
-                        .map(|(_, _, _, path)| path.clone())
+                        .find(|hit| hit.contains(x, y))
+                        .map(|hit| hit.path.clone())
                 })
             });
             let mut w = ws.write();
@@ -496,9 +573,11 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
                 Some(path) if path == v.flame_focus => {
                     v.flame_focus.pop();
                     v.selected_function = v.flame_focus.last().copied();
+                    v.selected_async = false;
                 }
                 Some(path) => {
                     v.selected_function = path.last().copied();
+                    v.selected_async = false;
                     v.flame_focus = path;
                 }
                 None => v.flame_focus.clear(),

@@ -151,11 +151,12 @@ fn header(mut ws: State<Workspace>, sort: SortBy, allocations: bool) -> Rect {
 fn detail(mut ws: State<Workspace>, view: &SessionView, row: &FunctionStats) -> Rect {
     let session = &view.session;
     let rgb = theme::group(row.group);
-    let worst: Vec<(u64, u64, u32)> = session
-        .calls_of(row.callsite, view.window())
-        .into_iter()
-        .take(8)
-        .collect();
+    let calls = if row.is_async {
+        session.async_calls_of(row.callsite, view.window())
+    } else {
+        session.calls_of(row.callsite, view.window())
+    };
+    let worst: Vec<(u64, u64, u32)> = calls.into_iter().take(8).collect();
     let history = row.history_p95_ns.clone();
     let window = view.window();
     let chart = scene(348., 120., move |p, w, h| {
@@ -317,96 +318,110 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
         .callsites()
         .filter(|c| c.kind == sismo_format::CallsiteKind::Span)
         .count();
-    let selected = view.selected_function;
+    let selected = view.selected_function.map(|id| (id, view.selected_async));
     let allocations = view.session.allocations;
-    let detail_row = selected.and_then(|id| rows.iter().find(|r| r.callsite == id).cloned());
+    let detail_row = selected.and_then(|(id, is_async)| {
+        rows.iter()
+            .find(|r| r.callsite == id && r.is_async == is_async)
+            .or_else(|| rows.iter().find(|r| r.callsite == id))
+            .cloned()
+    });
     let count = rows.len();
 
-    let list = VirtualScrollView::new_with_data(
-        (rows, selected, allocations),
-        move |item, (rows, selected, allocations): &(Vec<FunctionStats>, Option<u32>, bool)| {
-            let selected = *selected;
-            let allocations = *allocations;
-            let cols = columns(allocations);
-            let Some(row) = rows.get(item.index) else {
-                return rect().into_element();
-            };
-            let rgb = theme::group(row.group);
-            let callsite = row.callsite;
-            let on = selected == Some(callsite);
-            rect()
-                .key(callsite)
-                .width(Size::fill())
-                .height(Size::px(ROW_H))
-                .horizontal()
-                .content(Content::flex())
-                .cross_align(Alignment::Center)
-                .padding((0., 16.))
-                .background(theme::color(if on { theme::BG3 } else { theme::BG0 }))
-                .cursor(CursorIcon::Pointer)
-                .on_press(move |_| {
-                    if let Some(v) = ws.write().active_mut() {
-                        v.selected_function = Some(callsite);
-                    }
-                })
-                .on_mouse_down(move |e: Event<MouseEventData>| {
-                    if e.button == Some(MouseButton::Right) {
-                        let mut w = ws.write();
-                        if let Some(v) = w.active_mut() {
+    let list =
+        VirtualScrollView::new_with_data(
+            (rows, selected, allocations),
+            move |item,
+                  (rows, selected, allocations): &(
+                Vec<FunctionStats>,
+                Option<(u32, bool)>,
+                bool,
+            )| {
+                let selected = *selected;
+                let allocations = *allocations;
+                let cols = columns(allocations);
+                let Some(row) = rows.get(item.index) else {
+                    return rect().into_element();
+                };
+                let rgb = theme::group(row.group);
+                let callsite = row.callsite;
+                let is_async = row.is_async;
+                let on = selected == Some((callsite, is_async));
+                rect()
+                    .key((callsite, is_async))
+                    .width(Size::fill())
+                    .height(Size::px(ROW_H))
+                    .horizontal()
+                    .content(Content::flex())
+                    .cross_align(Alignment::Center)
+                    .padding((0., 16.))
+                    .background(theme::color(if on { theme::BG3 } else { theme::BG0 }))
+                    .cursor(CursorIcon::Pointer)
+                    .on_press(move |_| {
+                        if let Some(v) = ws.write().active_mut() {
                             v.selected_function = Some(callsite);
+                            v.selected_async = is_async;
                         }
-                        w.menu = Some(super::context_menu::MenuTarget {
-                            callsite,
-                            thread: None,
-                            span: None,
-                            x: e.global_location.x,
-                            y: e.global_location.y,
-                        });
-                    }
-                })
-                .child(
-                    rect()
-                        .width(Size::flex(1.))
-                        .horizontal()
-                        .spacing(8.)
-                        .cross_align(Alignment::Center)
-                        .child(swatch(rgb, 6., 1.))
-                        .child(mono(row.name.clone(), 12., theme::TEXT)),
-                )
-                .children(
-                    cells(row, allocations)
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, value)| {
-                            rect()
-                                .width(Size::px(cols[i].2))
-                                .horizontal()
-                                .main_align(Alignment::End)
-                                .child(mono(
-                                    value,
-                                    12.,
-                                    if i == 2 { theme::TEXT } else { theme::TEXT2 },
-                                ))
-                                .into_element()
-                        }),
-                )
-                .child(
-                    rect()
-                        .width(Size::px(176.))
-                        .padding((0., 0., 0., 16.))
-                        .child(
-                            rect()
-                                .width(Size::px(160.))
-                                .height(Size::px(20.))
-                                .background(sparkline(&row.history_p95_ns, rgb)),
-                        ),
-                )
-                .into_element()
-        },
-    )
-    .length(count)
-    .item_size(ROW_H)
-    .height(Size::flex(1.));
+                    })
+                    .on_mouse_down(move |e: Event<MouseEventData>| {
+                        if e.button == Some(MouseButton::Right) {
+                            let mut w = ws.write();
+                            if let Some(v) = w.active_mut() {
+                                v.selected_function = Some(callsite);
+                                v.selected_async = is_async;
+                            }
+                            w.menu = Some(super::context_menu::MenuTarget {
+                                callsite,
+                                thread: None,
+                                span: None,
+                                x: e.global_location.x,
+                                y: e.global_location.y,
+                            });
+                        }
+                    })
+                    .child(
+                        rect()
+                            .width(Size::flex(1.))
+                            .horizontal()
+                            .spacing(8.)
+                            .cross_align(Alignment::Center)
+                            .child(swatch(rgb, 6., 1.))
+                            .child(mono(row.label(), 12., theme::TEXT)),
+                    )
+                    .children(
+                        cells(row, allocations)
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, value)| {
+                                rect()
+                                    .width(Size::px(cols[i].2))
+                                    .horizontal()
+                                    .main_align(Alignment::End)
+                                    .child(mono(
+                                        value,
+                                        12.,
+                                        if i == 2 { theme::TEXT } else { theme::TEXT2 },
+                                    ))
+                                    .into_element()
+                            }),
+                    )
+                    .child(
+                        rect()
+                            .width(Size::px(176.))
+                            .padding((0., 0., 0., 16.))
+                            .child(
+                                rect()
+                                    .width(Size::px(160.))
+                                    .height(Size::px(20.))
+                                    .background(sparkline(&row.history_p95_ns, rgb)),
+                            ),
+                    )
+                    .into_element()
+            },
+        )
+        .length(count)
+        .item_size(ROW_H)
+        .height(Size::flex(1.));
 
     let empty = (count == 0).then(|| {
         rect()

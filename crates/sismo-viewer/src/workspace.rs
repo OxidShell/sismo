@@ -228,6 +228,21 @@ pub enum Origin {
     Live(Box<Live>),
 }
 
+/// Name and timing of the canvas element under the pointer, shown when the
+/// element is too small to carry its own label.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HoverTip {
+    /// The canvas it belongs to, so each canvas only draws its own.
+    pub canvas: &'static str,
+    /// Identifies the element; the tip is rewritten only when it changes.
+    pub key: u64,
+    /// Anchor in the canvas, already clamped to keep the tip inside it.
+    pub x: f32,
+    pub y: f32,
+    pub name: String,
+    pub detail: String,
+}
+
 /// One open session tab.
 #[allow(
     clippy::struct_excessive_bools,
@@ -250,6 +265,9 @@ pub struct SessionView {
     pub selected_frame: Option<u32>,
     pub selected_span: Option<(u32, u32)>,
     pub selected_function: Option<u32>,
+    /// Whether the selected function row is its async row.
+    pub selected_async: bool,
+    pub hover: Option<HoverTip>,
     pub selected_log: Option<usize>,
     /// Flamegraph focus path (callsites from the root).
     pub flame_focus: Vec<u32>,
@@ -293,6 +311,8 @@ impl SessionView {
             selected_frame: None,
             selected_span: None,
             selected_function: None,
+            selected_async: false,
+            hover: None,
             selected_log: None,
             flame_focus: Vec::new(),
             paused: false,
@@ -853,6 +873,7 @@ impl SessionView {
         self.session.clear_events();
         self.selected_span = None;
         self.selected_function = None;
+        self.selected_async = false;
         self.selected_log = None;
         self.flame_focus.clear();
         self.reset_view();
@@ -931,6 +952,7 @@ impl SessionView {
         self.selected_frame = None;
         self.selected_span = None;
         self.selected_function = None;
+        self.selected_async = false;
         self.selected_log = None;
         self.flame_focus.clear();
         if let Origin::Live(live) = &mut self.origin {

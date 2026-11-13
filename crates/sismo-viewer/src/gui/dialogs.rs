@@ -849,6 +849,7 @@ impl Component for PaletteDialog {
                         let mut w = ws.write();
                         if let Some(v) = w.active_mut() {
                             v.selected_function = Some(id);
+                            v.selected_async = false;
                             v.tab = Tab::Functions;
                         }
                         w.dialog = None;

@@ -130,10 +130,12 @@ fn run(mut ws: State<Workspace>, target: MenuTarget, action: Action) {
             match action {
                 Action::Functions => {
                     v.selected_function = Some(target.callsite);
+                    v.selected_async = false;
                     v.tab = Tab::Functions;
                 }
                 Action::Flamegraph => {
                     v.selected_function = Some(target.callsite);
+                    v.selected_async = false;
                     v.tab = Tab::Flamegraph;
                 }
                 Action::SelectFrame => {
