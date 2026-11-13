@@ -212,16 +212,21 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, row: &FunctionStats) -> 
                 .spacing(8.)
                 .cross_align(Alignment::Center)
                 .child(swatch(rgb, 10., 2.))
-                .child(mono(row.name.clone(), 13., theme::TEXT).font_weight(600)),
+                .child(mono(row.label(), 13., theme::TEXT).font_weight(600)),
         )
         .child(mono(
-            format!(
-                "{}:{} · {} ({})",
-                row.file,
-                row.line,
-                row.krate,
-                theme::group_label(row.group)
-            ),
+            // Runtime callsites (hotpath, tracing without location) have no line.
+            if row.line == 0 {
+                format!("{} ({})", row.krate, theme::group_label(row.group))
+            } else {
+                format!(
+                    "{}:{} · {} ({})",
+                    row.file,
+                    row.line,
+                    row.krate,
+                    theme::group_label(row.group)
+                )
+            },
             11.,
             theme::TEXT3,
         ))

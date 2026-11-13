@@ -61,6 +61,11 @@ const FRAMEWORK: &[&str] = &[
     "freya*",
     "torin",
     "ragnarok",
+    // Freya's own support crates.
+    "tiny_diff",
+    "tiny_cache",
+    "tiny_notify",
+    "pathgraph",
     "skia*",
     "winit",
     "wgpu*",
@@ -122,6 +127,16 @@ const OTHER: &[&str] = &[
     "parking_lot*",
     "dashmap",
     "sismo*",
+    // Unlabeled `hotpath::measure_block!` scopes outside a measured function.
+    "hotpath*",
+    // Accessibility and desktop plumbing under GUI frameworks on Linux.
+    "zbus*",
+    "atspi*",
+    "calloop*",
+    "smithay*",
+    "wayland*",
+    "polling",
+    "mundy",
     "image",
     "png",
     "zune*",
@@ -222,6 +237,8 @@ mod tests {
         groups.set_app("notinplus");
         assert_eq!(groups.classify("freya_core"), Group::Framework);
         assert_eq!(groups.classify("tokio"), Group::Other);
+        assert_eq!(groups.classify("zbus"), Group::Other);
+        assert_eq!(groups.classify("tiny_diff"), Group::Framework);
         assert_eq!(groups.classify("notinplus"), Group::App);
         assert_eq!(groups.classify("notein-sync"), Group::App);
         groups.assign("lyon_tessellation", Group::App);
