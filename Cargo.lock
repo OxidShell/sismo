@@ -1632,8 +1632,7 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 [[package]]
 name = "freya"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86a157cca36cf2009dac4473da2f55141bcf8ab85e4e4b749af647ea36227220"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "cfg-if",
  "freya-android",
@@ -1652,8 +1651,7 @@ dependencies = [
 [[package]]
 name = "freya-android"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8586bf2294591085747df1e0a6be3a5cdd0d503758b055f7ef7daeb48314508"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "freya-components",
  "freya-core",
@@ -1666,8 +1664,7 @@ dependencies = [
 [[package]]
 name = "freya-animation"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de7e29daad10f49cbdac29051a67f6995891b7aca248e80a1b283ea1488c4c5d"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "easer",
  "freya-core",
@@ -1676,8 +1673,7 @@ dependencies = [
 [[package]]
 name = "freya-clipboard"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66244a262588d51645719e258b4d725320183e2ee0f4ad0d4c9cba57a849383d"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "copypasta",
  "freya-core",
@@ -1686,8 +1682,7 @@ dependencies = [
 [[package]]
 name = "freya-components"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d05749815dce31334be55f19426c3562c30eddff68ef94fd38acb25ee7057c8c"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -1709,8 +1704,7 @@ dependencies = [
 [[package]]
 name = "freya-core"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69bb946f2c60bfaa0b472945495589fbd7b72e1dbeed4e6a7a60af482116ff20"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "accesskit",
  "async-io",
@@ -1723,7 +1717,7 @@ dependencies = [
  "futures-lite",
  "futures-util",
  "generational-box",
- "hotpath 0.29.2",
+ "hotpath",
  "itertools",
  "keyboard-types",
  "mundy",
@@ -1742,8 +1736,7 @@ dependencies = [
 [[package]]
 name = "freya-edit"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c430733bb39cb91b123d7180b99ad8688fb195585eec8064ec9e3d218a15ef1c"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "bitflags 2.13.2",
  "freya-clipboard",
@@ -1757,8 +1750,7 @@ dependencies = [
 [[package]]
 name = "freya-engine"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24cfd6f0761f115e09e8e08c78b7f8e679e18755bc43f0447f3fd168ce55f1a3"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "freya-skia-safe",
 ]
@@ -1766,8 +1758,7 @@ dependencies = [
 [[package]]
 name = "freya-i18n"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33fbd46046692c39354328d8f3e11588ee351d245b5f89fdeda719dd4877b369"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "fluent",
  "freya-core",
@@ -1778,8 +1769,7 @@ dependencies = [
 [[package]]
 name = "freya-metrics-plugin"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ef93417a0e306975d3768c41fbc8452db613693ec10ae3a23b3f440e3cde31a"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "freya-core",
  "freya-engine",
@@ -1790,8 +1780,7 @@ dependencies = [
 [[package]]
 name = "freya-sdk"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e00cd3e6290e15b16a01989f1e15b1ef361afe6c0629aadd49b061b36967727b"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "freya-core",
 ]
@@ -1840,8 +1829,7 @@ dependencies = [
 [[package]]
 name = "freya-testing"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "139d4988bc276b418b52050e41dd3daf677b9916726cfaaf88626a770f56f5c5"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "accesskit",
  "freya-clipboard",
@@ -1856,8 +1844,7 @@ dependencies = [
 [[package]]
 name = "freya-winit"
 version = "0.5.0-rc.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2b550e02fe98b42fc7525156dd0de53874e94d80eef773fd0648df3c5eb66a7"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -1873,7 +1860,7 @@ dependencies = [
  "gl",
  "glutin",
  "glutin-winit",
- "hotpath 0.29.2",
+ "hotpath",
  "image",
  "keyboard-types",
  "libc",
@@ -2219,52 +2206,6 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hotpath"
-version = "0.29.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b4af2b5ecf2650278fe33b0e49b68c8c484d2306475c127628316dea740cf5c"
-dependencies = [
- "arc-swap",
- "cfg-if",
- "crossbeam-channel",
- "futures-core",
- "hdrhistogram",
- "hotpath-drain 0.29.2",
- "hotpath-macros 0.29.2",
- "libc",
- "pin-project-lite",
- "quanta",
- "regex-lite",
- "serde",
- "serde_json",
- "time",
- "tiny_http",
-]
-
-[[package]]
-name = "hotpath"
-version = "0.30.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9632c1fd213e63c1b88d8f3e59543da4999b17f859cc1e1d67cf8f2207e8935"
-dependencies = [
- "arc-swap",
- "cfg-if",
- "crossbeam-channel",
- "futures-core",
- "hdrhistogram",
- "hotpath-drain 0.30.3",
- "hotpath-macros 0.30.3",
- "libc",
- "pin-project-lite",
- "quanta",
- "regex-lite",
- "serde",
- "serde_json",
- "time",
- "tiny_http",
-]
-
-[[package]]
-name = "hotpath"
 version = "0.31.2"
 source = "git+https://github.com/hotpath-rs/hotpath?rev=573d7c21a87c60053c1b0d07a2b8f39324133772#573d7c21a87c60053c1b0d07a2b8f39324133772"
 dependencies = [
@@ -2273,8 +2214,8 @@ dependencies = [
  "crossbeam-channel",
  "futures-core",
  "hdrhistogram",
- "hotpath-drain 0.31.2",
- "hotpath-macros 0.31.2",
+ "hotpath-drain",
+ "hotpath-macros",
  "libc",
  "pin-project-lite",
  "quanta",
@@ -2287,42 +2228,8 @@ dependencies = [
 
 [[package]]
 name = "hotpath-drain"
-version = "0.29.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5cceb6c15fbaaeb00b51acc7be7fad533d0b56cb422b1cfc16cf9ca1624d33a"
-
-[[package]]
-name = "hotpath-drain"
-version = "0.30.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "738324f75aec847dea984f6806402f4f1bdfab437b4700fc8c3ebcad2dff6424"
-
-[[package]]
-name = "hotpath-drain"
 version = "0.31.2"
 source = "git+https://github.com/hotpath-rs/hotpath?rev=573d7c21a87c60053c1b0d07a2b8f39324133772#573d7c21a87c60053c1b0d07a2b8f39324133772"
-
-[[package]]
-name = "hotpath-macros"
-version = "0.29.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08c0a42eb299ebb7ec6b9161489e5bf132603a34ca12cecadb8490937aa0492a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "hotpath-macros"
-version = "0.30.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d92fdfec803932e5764ea93c201cf7c6c2d8cff1871da44f64f5094c9c3ef8a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
 
 [[package]]
 name = "hotpath-macros"
@@ -3586,9 +3493,8 @@ checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
 name = "pathgraph"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14254437a3a8803f8dd7e5ccc6f3a42f1da3ab69aebfed5afecee286aafa6f01"
+version = "0.5.0-rc.13"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 
 [[package]]
 name = "percent-encoding"
@@ -3924,13 +3830,12 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "ragnarok"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b97d694f9f0dd0faa78576ee4f012489eb3b6ccb2568adbbd8b4240a8eebc55"
+version = "0.5.0-rc.13"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "euclid",
  "hashbrown 0.16.1",
- "hotpath 0.30.3",
+ "hotpath",
  "itertools",
  "rustc-hash",
  "tracing",
@@ -4415,7 +4320,7 @@ checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 name = "sismo"
 version = "0.1.1"
 dependencies = [
- "hotpath 0.31.2",
+ "hotpath",
  "istmo-core",
  "libc",
  "log",
@@ -4456,7 +4361,7 @@ dependencies = [
  "freya",
  "freya-core",
  "freya-winit",
- "hotpath 0.31.2",
+ "hotpath",
  "sismo",
  "tracing-subscriber",
 ]
@@ -4834,9 +4739,8 @@ dependencies = [
 
 [[package]]
 name = "tiny-cache"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ebeb642bddf8d6743fd24981b45316d763b1654f566a47ce931dac6221c4f9"
+version = "0.5.0-rc.13"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "rustc-hash",
  "smallvec",
@@ -4844,20 +4748,18 @@ dependencies = [
 
 [[package]]
 name = "tiny-diff"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86cf62d82f7e5e9665df01ecb4461b49c753a448e3ce6f72e1dd600cd4c69812"
+version = "0.5.0-rc.13"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "hashbrown 0.16.1",
- "hotpath 0.30.3",
+ "hotpath",
  "rustc-hash",
 ]
 
 [[package]]
 name = "tiny-notify"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "095c5021c22063141299d0fe864f2b4fcb2b662c7e8f8a2e3b3e5e80253e85ad"
+version = "0.5.0-rc.13"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 
 [[package]]
 name = "tiny-skia"
@@ -4999,9 +4901,8 @@ checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "torin"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecb3aab67b6697ab4ada597ead4b21c5e1879abcb621cae52ba416ebbc3f5418"
+version = "0.5.0-rc.13"
+source = "git+https://github.com/SergioRibera/freya?branch=sismo%2Fhotpath-sink#5f48a4b8e640501a3091f5a810ce15e979479224"
 dependencies = [
  "euclid",
  "hashbrown 0.16.1",

@@ -78,3 +78,25 @@ istmo-plugins-schema = { git = "https://github.com/SergioRibera/istmo", rev = "c
 # The hotpath function sink (hotpath-rs/hotpath#825) is merged but not
 # released yet; take the merge commit until the next hotpath release.
 hotpath = { git = "https://github.com/hotpath-rs/hotpath", rev = "573d7c21a87c60053c1b0d07a2b8f39324133772" }
+# Demo only: Freya rc.13 with its hotpath bumped to the sink commit, so its own
+# `#[hotpath::measure]` scopes reach sismo. Drop once Freya releases on a
+# hotpath with the sink; every crate of that tree is patched so one Freya links.
+freya = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+freya-android = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+freya-animation = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+freya-clipboard = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+freya-components = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+freya-core = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+freya-edit = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+freya-engine = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+freya-i18n = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+freya-metrics-plugin = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+freya-sdk = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+freya-testing = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+freya-winit = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+pathgraph = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+ragnarok = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+tiny-cache = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+tiny-diff = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+tiny-notify = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
+torin = { git = "https://github.com/SergioRibera/freya", branch = "sismo/hotpath-sink" }
