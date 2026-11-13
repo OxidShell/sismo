@@ -14,21 +14,41 @@ pub enum Kind {
     Danger,
 }
 
-/// Shows `tip` on `canvas`, or clears that canvas's tip. The workspace is
+/// Shows `tip` on `canvas`, or clears that canvas's tip. The state is
 /// written only when the element under the pointer changes, not on every
 /// pointer move.
-pub fn set_hover(mut ws: State<Workspace>, canvas: &'static str, tip: Option<HoverTip>) {
+pub fn set_hover(ws: State<Workspace>, canvas: &'static str, tip: Option<HoverTip>) {
+    let mut hover = ws.peek().hover;
     let same = |current: Option<&HoverTip>| match (current, &tip) {
         (Some(a), Some(b)) => a.canvas == b.canvas && a.key == b.key,
         (Some(a), None) => a.canvas != canvas,
         (None, None) => true,
         (None, Some(_)) => false,
     };
-    if ws.peek().active().is_none_or(|v| same(v.hover.as_ref())) {
+    if same(hover.peek().as_ref()) {
         return;
     }
-    if let Some(v) = ws.write().active_mut() {
-        v.hover = tip;
+    hover.set(tip);
+}
+
+/// Shows the hover tip of `canvas` over it. The only reader of the hover
+/// state, so a new tip redraws this layer alone.
+#[derive(PartialEq)]
+pub struct HoverLayer {
+    pub hover: State<Option<HoverTip>>,
+    pub canvas: &'static str,
+}
+
+impl Component for HoverLayer {
+    fn render(&self) -> impl IntoElement {
+        let tip = self
+            .hover
+            .read()
+            .clone()
+            .filter(|tip| tip.canvas == self.canvas);
+        rect()
+            .position(Position::new_absolute())
+            .maybe_child(tip.as_ref().map(hover_tip))
     }
 }
 

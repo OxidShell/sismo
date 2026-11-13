@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use regex_lite::Regex;
 use sismo_format::{Level, Source};
 
@@ -202,6 +204,81 @@ pub enum RangeSpec {
     Between(u64, u64),
 }
 
+/// Results of the terms that only depend on the callsite (crate, function,
+/// file, text), keyed by session, term and callsite: a filter then costs one
+/// string match per callsite instead of one per span. A clone starts empty,
+/// since it may be evaluated against another session or grouping, and the
+/// memo never makes two queries unequal.
+#[derive(Default)]
+struct CallsiteMemo(RefCell<Vec<MemoEntry>>);
+
+/// One term evaluated against one session: by callsite id, 0 = not yet
+/// evaluated, 1 = no match, 2 = match.
+struct MemoEntry {
+    session: usize,
+    term: usize,
+    results: Vec<u8>,
+}
+
+impl CallsiteMemo {
+    fn get(
+        &self,
+        session: &Session,
+        term: &TermKind,
+        callsite: u32,
+        test: impl FnOnce() -> bool,
+    ) -> bool {
+        let (session_key, term_key) = (
+            std::ptr::from_ref(session).addr(),
+            std::ptr::from_ref(term).addr(),
+        );
+        let index = callsite as usize;
+        let mut entries = self.0.borrow_mut();
+        let position = entries
+            .iter()
+            .position(|e| e.session == session_key && e.term == term_key)
+            .unwrap_or_else(|| {
+                entries.push(MemoEntry {
+                    session: session_key,
+                    term: term_key,
+                    results: Vec::new(),
+                });
+                entries.len() - 1
+            });
+        let results = &mut entries[position].results;
+        if results.len() <= index {
+            results.resize(index + 1, 0);
+        }
+        match results[index] {
+            1 => false,
+            2 => true,
+            _ => {
+                let result = test();
+                results[index] = if result { 2 } else { 1 };
+                result
+            }
+        }
+    }
+}
+
+impl Clone for CallsiteMemo {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PartialEq for CallsiteMemo {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for CallsiteMemo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CallsiteMemo")
+    }
+}
+
 /// Parsed query: OR-ed groups of AND-ed terms, plus highlight-only
 /// `find:` terms and an optional time window.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -209,6 +286,7 @@ pub struct Query {
     pub groups: Vec<Vec<Term>>,
     pub find: Vec<Matcher>,
     pub range: Option<RangeSpec>,
+    memo: CallsiteMemo,
 }
 
 /// Parses `512`, `64kb`, `1.5mb`, `2gb` (binary units).
@@ -481,19 +559,25 @@ impl Query {
     pub fn matches_span(&self, session: &Session, thread: &str, span: &Span) -> bool {
         let callsite = span.callsite;
         self.eval(|kind| match kind {
-            TermKind::Crate(m, g) => Some(Self::crate_matches(session, callsite, m, g)),
-            TermKind::Function(m) => Some(m.iter().any(|m| m.matches(session.name(callsite)))),
+            TermKind::Crate(m, g) => Some(self.memo.get(session, kind, callsite, || {
+                Self::crate_matches(session, callsite, m, g)
+            })),
+            TermKind::Function(m) => Some(self.memo.get(session, kind, callsite, || {
+                m.iter().any(|m| m.matches(session.name(callsite)))
+            })),
             TermKind::Thread(m) => Some(m.iter().any(|m| m.matches(thread))),
-            TermKind::File(m) => Some(
+            TermKind::File(m) => Some(self.memo.get(session, kind, callsite, || {
                 session
                     .callsite(callsite)
-                    .is_some_and(|c| m.iter().any(|m| m.matches(&c.file))),
-            ),
+                    .is_some_and(|c| m.iter().any(|m| m.matches(&c.file)))
+            })),
             TermKind::Duration(cmp, ns) => Some(cmp.test(span.duration(session.end), *ns)),
             TermKind::SelfTime(cmp, ns) => Some(cmp.test(span.self_ns, *ns)),
             TermKind::Alloc(cmp, bytes) => Some(cmp.test(span.alloc_bytes, *bytes)),
             TermKind::Frame(sel) => Some(Self::frame_matches(session, sel, span.start)),
-            TermKind::Text(m) => Some(m.matches(session.name(callsite))),
+            TermKind::Text(m) => Some(self.memo.get(session, kind, callsite, || {
+                m.matches(session.name(callsite))
+            })),
             TermKind::Level { .. } | TermKind::Source(_) | TermKind::Calls(..) => None,
         })
     }

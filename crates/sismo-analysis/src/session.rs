@@ -362,7 +362,12 @@ pub struct Session {
     pub end: u64,
     /// Earliest timestamp seen.
     pub start: Option<u64>,
+    /// Read freely; change it with [`Session::set_groups`] so the per-callsite
+    /// cache follows.
     pub groups: Groups,
+    /// Group of every callsite, by id: classifying a crate allocates and
+    /// walks every rule, far too slow to repeat per span.
+    group_cache: Vec<Group>,
     pub events: u64,
     /// Whether the recording carries allocation counts.
     pub allocations: bool,
@@ -416,6 +421,7 @@ impl Session {
                     if !self.foreign {
                         self.groups.set_app(&info.app);
                         self.groups.add_app_crates(&info.app_crates);
+                        self.refresh_groups();
                         self.info = info;
                     }
                 }
@@ -430,6 +436,7 @@ impl Session {
                         self.callsites.resize(id + 1, None);
                     }
                     self.callsites[id] = Some(def);
+                    self.refresh_group(id);
                 }
                 Record::Batch { thread, events } => {
                     for event in events {
@@ -608,9 +615,28 @@ impl Session {
         self.callsite(id).map_or("?", CallsiteDef::crate_name)
     }
 
+    fn refresh_group(&mut self, id: usize) {
+        if self.group_cache.len() <= id {
+            self.group_cache.resize(id + 1, Group::Other);
+        }
+        let krate = self.callsites[id]
+            .as_ref()
+            .map_or("?", CallsiteDef::crate_name);
+        self.group_cache[id] = self.groups.classify(krate);
+    }
+
+    fn refresh_groups(&mut self) {
+        for id in 0..self.callsites.len() {
+            self.refresh_group(id);
+        }
+    }
+
     #[must_use]
     pub fn group_of(&self, id: u32) -> Group {
-        self.groups.classify(self.crate_of(id))
+        self.group_cache
+            .get(id as usize)
+            .copied()
+            .unwrap_or_else(|| self.groups.classify(self.crate_of(id)))
     }
 
     #[must_use]
@@ -671,6 +697,7 @@ impl Session {
     pub fn set_groups(&mut self, mut groups: Groups) {
         groups.add_app_crates(&self.info.app_crates);
         self.groups = groups;
+        self.refresh_groups();
     }
 
     /// The app, thread and callsite records known so far, enough for a

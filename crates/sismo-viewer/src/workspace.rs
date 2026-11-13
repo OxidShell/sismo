@@ -267,7 +267,6 @@ pub struct SessionView {
     pub selected_function: Option<u32>,
     /// Whether the selected function row is its async row.
     pub selected_async: bool,
-    pub hover: Option<HoverTip>,
     pub selected_log: Option<usize>,
     /// Flamegraph focus path (callsites from the root).
     pub flame_focus: Vec<u32>,
@@ -312,7 +311,6 @@ impl SessionView {
             selected_span: None,
             selected_function: None,
             selected_async: false,
-            hover: None,
             selected_log: None,
             flame_focus: Vec::new(),
             paused: false,

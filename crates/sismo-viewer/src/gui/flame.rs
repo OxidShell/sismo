@@ -15,7 +15,7 @@ use super::i18n::tr;
 use super::theme;
 use super::timeline::scene;
 use super::widgets::{
-    Kind, button, caption, hline, hover_tip, mono, set_hover, swatch, text, tool, vline,
+    HoverLayer, Kind, button, caption, hline, mono, set_hover, swatch, text, tool, vline,
 };
 use crate::workspace::{HoverTip, SessionView, Tab};
 
@@ -515,12 +515,10 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             }
         })
         .background(paint)
-        .maybe_child(
-            view.hover
-                .as_ref()
-                .filter(|tip| tip.canvas == "flame")
-                .map(hover_tip),
-        )
+        .child(HoverLayer {
+            hover: ws.peek().hover,
+            canvas: "flame",
+        })
         .on_pointer_move(move |e: Event<PointerEventData>| {
             let loc = e.element_location();
             #[allow(clippy::cast_possible_truncation)]

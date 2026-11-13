@@ -84,7 +84,7 @@ impl SortBy {
 }
 
 /// Node of an aggregated call tree.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct FlameNode {
     pub callsite: u32,
     pub total_ns: u64,
@@ -153,6 +153,16 @@ fn overlap(start: u64, end: u64, from: u64, to: u64) -> u64 {
 }
 
 /// Self time scaled to the part of a span inside the window.
+/// Moves the flat node `index` and its subtree out of `nodes` into a tree.
+fn assemble(nodes: &mut [FlameNode], children: &[Vec<usize>], index: usize) -> FlameNode {
+    let mut node = std::mem::take(&mut nodes[index]);
+    node.children = children[index]
+        .iter()
+        .map(|&child| assemble(nodes, children, child))
+        .collect();
+    node
+}
+
 fn clipped_self(self_ns: u64, start: u64, end: u64, from: u64, to: u64) -> u64 {
     let duration = end.saturating_sub(start);
     if duration == 0 {
@@ -320,60 +330,53 @@ impl Session {
     /// Aggregated call tree of `thread` (or every thread) in the window.
     #[must_use]
     pub fn flame(&self, query: &Query, thread: Option<u32>, (from, to): (u64, u64)) -> FlameNode {
-        let mut root = FlameNode {
+        // Built flat first: a span's node hangs off its parent's node, found
+        // by `(parent node, callsite)`, so no path is cloned per span.
+        let mut nodes = vec![FlameNode {
             callsite: 0,
             total_ns: 0,
             self_ns: 0,
             calls: 0,
             children: Vec::new(),
-        };
+        }];
+        let mut child_of: HashMap<(usize, u32), usize> = HashMap::new();
+        let mut children: Vec<Vec<usize>> = vec![Vec::new()];
         for t in self
             .threads
             .iter()
             .filter(|t| thread.is_none_or(|id| t.id == id))
         {
-            // Path of child indices from the root for every included span.
-            let mut paths: HashMap<u32, Vec<usize>> = HashMap::new();
+            // The node each span counted under; a filtered span passes its
+            // parent's on, so its children attach to the nearest kept ancestor.
+            let mut node_of = vec![0usize; t.spans.len()];
             for index in t.indices_in(from, to) {
                 let span = &t.spans[index as usize];
-                let end = span.end.min(self.end);
-                let mut path = span
-                    .parent
-                    .and_then(|p| paths.get(&p))
-                    .cloned()
-                    .unwrap_or_default();
+                let parent = span.parent.map_or(0, |p| node_of[p as usize]);
                 if !query.matches_span(self, &t.name, span) {
-                    // Filtered spans vanish; their children attach to the
-                    // nearest kept ancestor.
-                    paths.insert(index, path);
+                    node_of[index as usize] = parent;
                     continue;
                 }
-                let mut node = &mut root;
-                for &step in &path {
-                    node = &mut node.children[step];
-                }
-                let position = node
-                    .children
-                    .iter()
-                    .position(|c| c.callsite == span.callsite)
-                    .unwrap_or_else(|| {
-                        node.children.push(FlameNode {
-                            callsite: span.callsite,
-                            total_ns: 0,
-                            self_ns: 0,
-                            calls: 0,
-                            children: Vec::new(),
-                        });
-                        node.children.len() - 1
+                let node = *child_of.entry((parent, span.callsite)).or_insert_with(|| {
+                    nodes.push(FlameNode {
+                        callsite: span.callsite,
+                        total_ns: 0,
+                        self_ns: 0,
+                        calls: 0,
+                        children: Vec::new(),
                     });
-                let child = &mut node.children[position];
-                child.total_ns += overlap(span.start, end, from, to);
-                child.self_ns += clipped_self(span.self_ns, span.start, end, from, to);
-                child.calls += 1;
-                path.push(position);
-                paths.insert(index, path);
+                    children.push(Vec::new());
+                    children[parent].push(nodes.len() - 1);
+                    nodes.len() - 1
+                });
+                let end = span.end.min(self.end);
+                let entry = &mut nodes[node];
+                entry.total_ns += overlap(span.start, end, from, to);
+                entry.self_ns += clipped_self(span.self_ns, span.start, end, from, to);
+                entry.calls += 1;
+                node_of[index as usize] = node;
             }
         }
+        let mut root = assemble(&mut nodes, &children, 0);
         root.total_ns = root.children.iter().map(|c| c.total_ns).sum();
         sort_flame(&mut root);
         root

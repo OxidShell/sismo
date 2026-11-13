@@ -16,7 +16,7 @@ use super::draw::Scene;
 use super::i18n::tr;
 use super::theme::{self, Rgb};
 use super::widgets::{
-    Kind, button, caption, hline, hover_tip, mono, set_hover, swatch, text, tool,
+    HoverLayer, Kind, button, caption, hline, mono, set_hover, swatch, text, tool,
 };
 use crate::workspace::{HoverTip, SessionView, Tab};
 
@@ -1221,12 +1221,10 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
             }
         })
         .background(lanes_paint)
-        .maybe_child(
-            view.hover
-                .as_ref()
-                .filter(|tip| tip.canvas == "lanes")
-                .map(hover_tip),
-        )
+        .child(HoverLayer {
+            hover: ws.peek().hover,
+            canvas: "lanes",
+        })
         .on_pointer_leave(move |_| set_hover(ws, "lanes", None))
         .on_mouse_down(move |e: Event<MouseEventData>| {
             if e.button != Some(MouseButton::Right) {

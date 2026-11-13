@@ -14,6 +14,39 @@ use crate::workspace::{SessionView, Tab};
 const ROW_H: f32 = 28.;
 const BUCKETS: usize = 40;
 
+/// Inputs that change the function table: session tab, window, events seen,
+/// query text, hidden crates and threads, sort.
+type RowsKey = (u64, (u64, u64), u64, String, usize, SortBy);
+
+thread_local! {
+    /// Last table built, so hover, selection and other renders that change
+    /// none of its inputs reuse it instead of walking every span again.
+    static ROWS: std::cell::RefCell<Option<(RowsKey, std::rc::Rc<Vec<FunctionStats>>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn rows(view: &SessionView, query: &sismo_analysis::Query) -> std::rc::Rc<Vec<FunctionStats>> {
+    let key = (
+        view.id,
+        view.window(),
+        view.session.events,
+        view.query_text.clone(),
+        view.hidden_crates.len() + view.hidden_threads.len(),
+        view.sort,
+    );
+    ROWS.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if let Some((cached, rows)) = slot.as_ref()
+            && *cached == key
+        {
+            return std::rc::Rc::clone(rows);
+        }
+        let rows = std::rc::Rc::new(view.session.functions(query, key.1, BUCKETS, key.5));
+        *slot = Some((key, std::rc::Rc::clone(&rows)));
+        rows
+    })
+}
+
 const HISTORY_COLUMN: &str = "functions-col-history";
 
 /// Column: header key, sort key, width, right aligned.
@@ -327,7 +360,7 @@ pub fn view(mut ws: State<Workspace>, view: &SessionView) -> Rect {
     }
     let session = &view.session;
     let query = view.effective_query();
-    let rows = session.functions(&query, view.window(), BUCKETS, view.sort);
+    let rows = rows(view, &query).as_ref().clone();
     let total_functions = session
         .callsites()
         .filter(|c| c.kind == sismo_format::CallsiteKind::Span)

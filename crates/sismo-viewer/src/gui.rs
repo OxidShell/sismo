@@ -97,6 +97,10 @@ pub struct Workspace {
     /// Open settings section, if the settings screen is showing.
     pub settings: Option<settings::Section>,
     pub menu: Option<context_menu::MenuTarget>,
+    /// Tip of the canvas element under the pointer. A state of its own, so a
+    /// new tip redraws only the [`widgets::HoverLayer`] that shows it, not the
+    /// whole session screen with every span.
+    pub hover: State<Option<crate::workspace::HoverTip>>,
     next_id: u64,
 }
 
@@ -116,6 +120,7 @@ impl Workspace {
             toast: None,
             settings: None,
             menu: None,
+            hover: State::create(None),
             next_id: 1,
         };
         if let Some(file) = file {
