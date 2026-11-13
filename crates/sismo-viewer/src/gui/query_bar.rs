@@ -211,6 +211,19 @@ impl Component for QueryBar {
             .unwrap_or_default();
         let mut text_state = use_state(move || initial);
         let mut selected = use_state(|| 0usize);
+        // Other screens set the query too ("Filter to this function"), and it
+        // filters every tab: the field must show it so it can be read and cleared.
+        use_side_effect(move || {
+            let current = ws
+                .read()
+                .sessions
+                .get(index)
+                .map(|v| v.query_text.clone())
+                .unwrap_or_default();
+            if *text_state.peek() != current {
+                text_state.set(current);
+            }
+        });
         let a11y = use_a11y();
         let focus = use_focus(a11y);
         let focused = focus.read().is_focused();

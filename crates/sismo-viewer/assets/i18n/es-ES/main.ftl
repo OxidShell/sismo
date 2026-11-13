@@ -177,6 +177,7 @@ functions-history-caption = Histórico · p95 por tramo
 functions-worst-calls = Peores llamadas
 functions-worst-hint = Clic en una llamada = abrirla en el Timeline
 functions-filter-to = Filtrar a esta función
+functions-filter-clear = Quitar este filtro
 functions-empty-title = Nada con «{ $query }»
 functions-empty-body = Quita el término más estricto o amplía el rango.
 functions-clear-query = Limpiar consulta

@@ -177,6 +177,7 @@ functions-history-caption = History · p95 per bucket
 functions-worst-calls = Worst calls
 functions-worst-hint = Click a call = open it in the Timeline
 functions-filter-to = Filter to this function
+functions-filter-clear = Remove this filter
 functions-empty-title = Nothing matches “{ $query }”
 functions-empty-body = Drop the strictest term or widen the range.
 functions-clear-query = Clear query

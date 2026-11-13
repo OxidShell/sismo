@@ -199,6 +199,7 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, row: &FunctionStats) -> 
         p.text(&end, w - 64., h - 12., 10., theme::TEXT3, true, 64.);
     });
     let callsite = row.callsite;
+    let filtered = view.query_text == format!("fn:{}", session.name(callsite));
     rect()
         .width(Size::px(380.))
         .height(Size::fill())
@@ -296,13 +297,21 @@ fn detail(mut ws: State<Workspace>, view: &SessionView, row: &FunctionStats) -> 
         }))
         .child(text(tr!("functions-worst-hint"), 11., theme::TEXT3))
         .child(button(
-            tr!("functions-filter-to"),
+            if filtered {
+                tr!("functions-filter-clear")
+            } else {
+                tr!("functions-filter-to")
+            },
             Kind::Secondary,
             move |_| {
                 let mut w = ws.write();
                 let Some(v) = w.active_mut() else { return };
-                let name = v.session.name(callsite).to_owned();
-                v.set_query(format!("fn:{name}"));
+                let query = format!("fn:{}", v.session.name(callsite));
+                v.set_query(if v.query_text == query {
+                    String::new()
+                } else {
+                    query
+                });
             },
         ))
 }
