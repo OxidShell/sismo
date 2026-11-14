@@ -316,8 +316,7 @@ pub fn sessions_screen(mut ws: State<Workspace>) -> Rect {
                     .children(recent.into_iter().map(|path| {
                         let name = path
                             .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default();
+                            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
                         let meta = std::fs::metadata(&path).map_or(0, |m| m.len());
                         let tag = if name.contains("panic") {
                             (tr!("sessions-tag-black-box"), theme::ERROR)
@@ -326,8 +325,7 @@ pub fn sessions_screen(mut ws: State<Workspace>) -> Rect {
                         };
                         let dir = path
                             .parent()
-                            .map(|p| p.display().to_string())
-                            .unwrap_or_default();
+                            .map_or_else(String::new, |p| p.display().to_string());
                         let open = path.clone();
                         rect()
                             .width(Size::fill())

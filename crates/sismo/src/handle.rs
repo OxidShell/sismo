@@ -264,8 +264,7 @@ impl Handle {
         self.shared
             .dump_dir
             .as_deref()
-            .map(crate::crash_reports)
-            .unwrap_or_default()
+            .map_or_else(Vec::new, crate::crash_reports)
     }
 
     /// Deletes the crash report `name` from the dump directory.

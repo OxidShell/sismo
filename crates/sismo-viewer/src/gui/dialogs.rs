@@ -148,7 +148,7 @@ impl Component for PairDialog {
         let code = use_state(String::new);
         let w = ws.read();
         let view = w.active();
-        let app = view.map(|v| v.session.info.app.clone()).unwrap_or_default();
+        let app = view.map_or_else(String::new, |v| v.session.info.app.clone());
         let rejected = view.and_then(|v| v.live()).and_then(|l| match &l.status {
             LiveStatus::NeedsPairing { rejected } => rejected.clone(),
             _ => None,
@@ -456,13 +456,13 @@ impl Component for FilterDialog {
             .peek()
             .active()
             .and_then(|v| v.live())
-            .map(|l| l.app_filter.clone())
-            .unwrap_or_default();
+            .map_or_else(String::new, |l| l.app_filter.clone());
         let value = use_state(move || current);
         let parsed = sismo_format::Filter::parse(&value.read());
         let error = parsed.as_ref().err().map(ToString::to_string);
-        let preview: Vec<(String, String)> = parsed
-            .map(|f| {
+        let preview: Vec<(String, String)> = parsed.map_or_else(
+            |_| Vec::new(),
+            |f| {
                 std::iter::once((
                     tr!("dialog-filter-default"),
                     f.default_level().as_str().to_owned(),
@@ -472,8 +472,8 @@ impl Component for FilterDialog {
                         .map(|(t, l)| (t.to_owned(), l.as_str().to_owned())),
                 )
                 .collect()
-            })
-            .unwrap_or_default();
+            },
+        );
         let ok = error.is_none();
         panel(520.)
             .padding(24.)
@@ -771,20 +771,17 @@ impl Component for PaletteDialog {
         let functions: Vec<(u32, String)> = if needle.len() < 2 {
             Vec::new()
         } else {
-            ws.read()
-                .active()
-                .map(|v| {
-                    v.session
-                        .callsites()
-                        .filter(|c| {
-                            c.kind == sismo_format::CallsiteKind::Span
-                                && c.name.to_lowercase().contains(&needle)
-                        })
-                        .take(8)
-                        .map(|c| (c.id, c.name.clone()))
-                        .collect()
-                })
-                .unwrap_or_default()
+            ws.read().active().map_or_else(Vec::new, |v| {
+                v.session
+                    .callsites()
+                    .filter(|c| {
+                        c.kind == sismo_format::CallsiteKind::Span
+                            && c.name.to_lowercase().contains(&needle)
+                    })
+                    .take(8)
+                    .map(|c| (c.id, c.name.clone()))
+                    .collect()
+            })
         };
         let first = actions.first().map(|a| a.2);
         panel(600.)

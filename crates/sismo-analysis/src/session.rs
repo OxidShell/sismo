@@ -885,7 +885,7 @@ mod tests {
                 ],
             },
         ]);
-        assert!(session.async_spans.is_empty());
+        assert_eq!(session.async_spans, [] as [AsyncSpan; 0]);
         let spans = &session.threads[0].spans;
         let shape: Vec<_> = spans
             .iter()
@@ -987,7 +987,7 @@ mod tests {
             },
         ]);
         session.clear_events();
-        assert!(session.thread(1).unwrap().spans.is_empty());
+        assert_eq!(session.thread(1).unwrap().spans, [] as [Span; 0]);
         assert_eq!(session.span(), (0, 0));
         session.ingest(vec![Record::Batch {
             thread: 1,

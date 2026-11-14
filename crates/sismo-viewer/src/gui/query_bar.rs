@@ -213,8 +213,7 @@ impl Component for QueryBar {
             .peek()
             .sessions
             .get(index)
-            .map(|v| v.query_text.clone())
-            .unwrap_or_default();
+            .map_or_else(String::new, |v| v.query_text.clone());
         let mut text_state = use_state(move || initial);
         let mut selected = use_state(|| 0usize);
         // Other screens set the query too ("Filter to this function"), and it
@@ -224,8 +223,7 @@ impl Component for QueryBar {
                 .read()
                 .sessions
                 .get(index)
-                .map(|v| v.query_text.clone())
-                .unwrap_or_default();
+                .map_or_else(String::new, |v| v.query_text.clone());
             if *text_state.peek() != current {
                 text_state.set(current);
             }

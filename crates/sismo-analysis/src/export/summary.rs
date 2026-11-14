@@ -119,14 +119,12 @@ impl Session {
             .slowest_frames(window, options.slow_frames)
             .into_iter()
             .map(|frame| {
-                let mut spans: Vec<(String, u64)> = self
-                    .thread(frame.thread)
-                    .map(|t| {
+                let mut spans: Vec<(String, u64)> =
+                    self.thread(frame.thread).map_or_else(Vec::new, |t| {
                         t.spans_in(frame.start, frame.end)
                             .map(|s| (self.name(s.callsite).to_owned(), s.self_ns))
                             .collect()
-                    })
-                    .unwrap_or_default();
+                    });
                 spans.sort_unstable_by_key(|s| std::cmp::Reverse(s.1));
                 spans.truncate(5);
                 SlowFrame {
@@ -160,8 +158,7 @@ impl Session {
                     level: log.level.as_str(),
                     target: self
                         .callsite(log.callsite)
-                        .map(|c| c.target.clone())
-                        .unwrap_or_default(),
+                        .map_or_else(String::new, |c| c.target.clone()),
                     source: log.source.as_str(),
                     message: log.message.clone(),
                 });

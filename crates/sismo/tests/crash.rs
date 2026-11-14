@@ -49,7 +49,7 @@ fn a_thread_panic_is_recorded_with_its_backtrace_and_kept_as_a_crash_report() {
     assert!(!panic.1.contains("core::panicking"), "{}", panic.1);
 
     handle.delete_crash_report(&report.name).unwrap();
-    assert!(handle.crash_reports().is_empty());
+    assert_eq!(handle.crash_reports(), [] as [sismo::CrashReport; 0]);
     assert!(handle.delete_crash_report("../escape-panic.sismo").is_err());
     handle.shutdown();
     let _ = std::fs::remove_dir_all(root);
