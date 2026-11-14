@@ -178,40 +178,175 @@ impl Component for RecordingSection {
     }
 }
 
-fn network(ws: State<Workspace>) -> Element {
-    let w = ws.read();
-    let scanning = w.scanner.is_some();
-    let error = w.scan_error.clone();
-    let found = w.discovered.len();
-    drop(w);
+#[derive(PartialEq)]
+struct NetworkSection(State<Workspace>);
+
+impl Component for NetworkSection {
+    fn render(&self) -> impl IntoElement {
+        let mut ws = self.0;
+        let address = use_state(String::new);
+        let mut address_error = use_state(|| false);
+        let mut target = use_state(String::new);
+        let mut target_error = use_state(|| false);
+        let w = ws.read();
+        let scanning = w.scanner.is_some();
+        let error = w.scan_error.clone();
+        let warning = w.probe_warning.clone();
+        let found = w.discovered.len();
+        let targets = w.prefs.discovery_targets.clone();
+        drop(w);
+
+        let connect = move |_| {
+            let text = address.peek().trim().to_owned();
+            match parse_connect_address(&text) {
+                Some(addr) => {
+                    address_error.set(false);
+                    let mut w = ws.write();
+                    w.connect(addr);
+                    w.settings = None;
+                }
+                None => address_error.set(true),
+            }
+        };
+        let add_target = move |_| {
+            let text = target.peek().trim().to_owned();
+            if super::prefs::parse_discovery_target(&text).is_none() {
+                target_error.set(true);
+                return;
+            }
+            target_error.set(false);
+            target.set(String::new());
+            let mut w = ws.write();
+            if !w.prefs.discovery_targets.contains(&text) {
+                w.prefs.discovery_targets.push(text);
+                w.prefs.save();
+                w.restart_scanner();
+            }
+        };
+
+        rect()
+            .width(Size::fill())
+            .spacing(4.)
+            .child(row(
+                tr!("settings-discovery-port"),
+                mono("UDP 7701", 12., theme::TEXT),
+            ))
+            .child(row(
+                tr!("settings-data-port"),
+                mono("UDP 7720", 12., theme::TEXT),
+            ))
+            .child(row(
+                tr!("settings-scan-status"),
+                mono(
+                    match (&error, scanning) {
+                        (Some(e), _) => e.clone(),
+                        (None, true) => tr!("settings-scan-active", count = found.to_string()),
+                        (None, false) => tr!("settings-scan-off"),
+                    },
+                    12.,
+                    if error.is_some() {
+                        theme::ERROR
+                    } else {
+                        theme::TEXT
+                    },
+                ),
+            ))
+            .maybe_child(warning.as_ref().map(probe_warning))
+            .child(row(
+                tr!("settings-connect-address"),
+                rect()
+                    .horizontal()
+                    .spacing(8.)
+                    .cross_align(Alignment::Center)
+                    .child(
+                        Field::new(address)
+                            .placeholder("192.168.1.20:7720")
+                            .width(Size::px(260.)),
+                    )
+                    .child(button(tr!("settings-connect"), Kind::Primary, connect))
+                    .maybe_child(
+                        (*address_error.read())
+                            .then(|| text(tr!("settings-connect-invalid"), 11., theme::ERROR)),
+                    ),
+            ))
+            .child(row(
+                tr!("settings-discovery-targets"),
+                rect()
+                    .spacing(6.)
+                    .child(
+                        rect()
+                            .horizontal()
+                            .spacing(8.)
+                            .cross_align(Alignment::Center)
+                            .child(
+                                Field::new(target)
+                                    .placeholder("192.168.1.20")
+                                    .width(Size::px(260.)),
+                            )
+                            .child(button(tr!("settings-add"), Kind::Secondary, add_target))
+                            .maybe_child(
+                                (*target_error.read()).then(|| {
+                                    text(tr!("settings-target-invalid"), 11., theme::ERROR)
+                                }),
+                            ),
+                    )
+                    .children(targets.into_iter().map(|t| {
+                        let removed = t.clone();
+                        rect()
+                            .horizontal()
+                            .spacing(8.)
+                            .cross_align(Alignment::Center)
+                            .child(mono(t, 12., theme::TEXT))
+                            .child(button("×".to_owned(), Kind::Secondary, move |_| {
+                                let mut w = ws.write();
+                                w.prefs.discovery_targets.retain(|x| *x != removed);
+                                w.prefs.save();
+                                w.restart_scanner();
+                            }))
+                            .into_element()
+                    }))
+                    .child(text(
+                        tr!("settings-discovery-targets-hint"),
+                        11.,
+                        theme::TEXT3,
+                    )),
+            ))
+            .child(text(tr!("settings-network-hint"), 11., theme::TEXT3))
+    }
+}
+
+/// An address typed to connect to: `ip:port`, or an IP alone on the default
+/// data port.
+fn parse_connect_address(text: &str) -> Option<std::net::SocketAddr> {
+    text.parse().ok().or_else(|| {
+        text.parse::<std::net::IpAddr>()
+            .ok()
+            .map(|ip| std::net::SocketAddr::new(ip, sismo_format::net::DEFAULT_PORT))
+    })
+}
+
+/// A probe target the scanner cannot reach, with the macOS fix when the OS
+/// refused the route.
+pub fn probe_warning(warning: &super::ProbeWarning) -> Element {
     rect()
         .width(Size::fill())
-        .spacing(4.)
-        .child(row(
-            tr!("settings-discovery-port"),
-            mono("UDP 7701", 12., theme::TEXT),
-        ))
-        .child(row(
-            tr!("settings-data-port"),
-            mono("UDP 7720", 12., theme::TEXT),
-        ))
-        .child(row(
-            tr!("settings-scan-status"),
-            mono(
-                match (&error, scanning) {
-                    (Some(e), _) => e.clone(),
-                    (None, true) => tr!("settings-scan-active", count = found.to_string()),
-                    (None, false) => tr!("settings-scan-off"),
-                },
-                12.,
-                if error.is_some() {
-                    theme::ERROR
-                } else {
-                    theme::TEXT
-                },
+        .spacing(2.)
+        .padding((6., 8.))
+        .corner_radius(4.)
+        .background(theme::color(theme::WARN_DIM))
+        .child(text(
+            tr!(
+                "probe-warning",
+                target = warning.target.to_string(),
+                reason = warning.reason.as_str(),
             ),
+            12.,
+            theme::TEXT,
         ))
-        .child(text(tr!("settings-network-hint"), 11., theme::TEXT3))
+        .maybe_child(
+            (warning.blocked && cfg!(target_os = "macos"))
+                .then(|| text(tr!("probe-macos-hint"), 11., theme::TEXT2)),
+        )
         .into_element()
 }
 
@@ -470,7 +605,7 @@ impl Component for SettingsScreen {
         let body = match current {
             Section::Appearance => appearance(ws),
             Section::Recording => RecordingSection(ws).into_element(),
-            Section::Network => network(ws),
+            Section::Network => NetworkSection(ws).into_element(),
             Section::Devices => devices(ws),
             Section::Groups => groups(ws),
             Section::Shortcuts => shortcuts(),

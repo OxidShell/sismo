@@ -83,6 +83,18 @@ pub struct Toast {
     pub shown: Instant,
 }
 
+/// How often the scanner probes for apps.
+const SCAN_EVERY: Duration = Duration::from_secs(1);
+
+/// A discovery probe target that cannot be reached.
+#[derive(Debug, Clone)]
+pub struct ProbeWarning {
+    pub target: SocketAddr,
+    pub reason: String,
+    /// The OS refused the route: on macOS, the Local Network permission.
+    pub blocked: bool,
+}
+
 /// Everything the window shows.
 pub struct Workspace {
     pub sessions: Vec<SessionView>,
@@ -90,6 +102,9 @@ pub struct Workspace {
     pub scanner: Option<Scanner>,
     pub discovered: Vec<Discovered>,
     pub scan_error: Option<String>,
+    /// A probe target the scanner cannot reach; scanning goes on through the
+    /// others, so it is a warning, not [`Self::scan_error`].
+    pub probe_warning: Option<ProbeWarning>,
     pub scan_started: Instant,
     pub prefs: Prefs,
     pub dialog: Option<Dialog>,
@@ -106,7 +121,8 @@ pub struct Workspace {
 
 impl Workspace {
     fn new(file: Option<PathBuf>, live: Option<SocketAddr>) -> Self {
-        let scanner = Scanner::start(Duration::from_secs(1));
+        let prefs = Prefs::load();
+        let scanner = Scanner::start(SCAN_EVERY, prefs.discovery_targets());
         let scan_error = scanner.as_ref().err().map(ToString::to_string);
         let mut workspace = Self {
             sessions: Vec::new(),
@@ -114,8 +130,9 @@ impl Workspace {
             scanner: scanner.ok(),
             discovered: Vec::new(),
             scan_error,
+            probe_warning: None,
             scan_started: Instant::now(),
-            prefs: Prefs::load(),
+            prefs,
             dialog: None,
             toast: None,
             settings: None,
@@ -307,6 +324,21 @@ impl Workspace {
                 .is_some_and(|t| t.shown.elapsed() > Duration::from_secs(8))
     }
 
+    /// Scans again from scratch with the current discovery targets.
+    pub fn restart_scanner(&mut self) {
+        self.scanner = None;
+        self.discovered.clear();
+        self.probe_warning = None;
+        self.scan_started = Instant::now();
+        match Scanner::start(SCAN_EVERY, self.prefs.discovery_targets()) {
+            Ok(scanner) => {
+                self.scanner = Some(scanner);
+                self.scan_error = None;
+            }
+            Err(error) => self.scan_error = Some(error.to_string()),
+        }
+    }
+
     fn poll(&mut self) {
         if let Some(scanner) = &self.scanner {
             for event in scanner.events.try_iter() {
@@ -316,6 +348,22 @@ impl Workspace {
                         self.discovered.push(found);
                     }
                     Ok(ScanEvent::Lost(addr)) => self.discovered.retain(|d| d.addr != addr),
+                    Ok(ScanEvent::ProbeFailed {
+                        target,
+                        reason,
+                        blocked,
+                    }) => {
+                        // The broadcast target says most about the network; keep
+                        // it over interface or extra targets failing after it.
+                        let broadcast = target.ip() == std::net::Ipv4Addr::BROADCAST;
+                        if broadcast || self.probe_warning.is_none() {
+                            self.probe_warning = Some(ProbeWarning {
+                                target,
+                                reason,
+                                blocked,
+                            });
+                        }
+                    }
                     Err(error) => self.scan_error = Some(error),
                 }
             }

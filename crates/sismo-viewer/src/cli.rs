@@ -405,7 +405,7 @@ fn export(
 
 fn scan(timeout: &str) -> Result<(), CliError> {
     let timeout = Duration::from_nanos(parse_duration(timeout)?);
-    let scanner = Scanner::start(Duration::from_millis(500))?;
+    let scanner = Scanner::start(Duration::from_millis(500), Vec::new())?;
     let deadline = Instant::now() + timeout;
     let mut found = 0;
     while let Some(left) = deadline.checked_duration_since(Instant::now()) {
@@ -425,6 +425,18 @@ fn scan(timeout: &str) -> Result<(), CliError> {
                 );
             }
             Ok(Ok(ScanEvent::Lost(_))) => {}
+            Ok(Ok(ScanEvent::ProbeFailed {
+                target,
+                reason,
+                blocked,
+            })) => {
+                eprintln!("cannot probe {target}: {reason}");
+                if blocked && cfg!(target_os = "macos") {
+                    eprintln!(
+                        "macOS blocks the LAN for this terminal: allow it under System Settings → Privacy & Security → Local Network. Apps on this machine are still found."
+                    );
+                }
+            }
             Ok(Err(error)) => return Err(CliError::Live(error)),
             Err(_) => break,
         }
@@ -439,7 +451,7 @@ pub fn resolve(target: &str) -> Result<SocketAddr, CliError> {
     if let Ok(addr) = target.parse::<SocketAddr>() {
         return Ok(addr);
     }
-    let scanner = Scanner::start(Duration::from_millis(500))?;
+    let scanner = Scanner::start(Duration::from_millis(500), Vec::new())?;
     let deadline = Instant::now() + Duration::from_secs(5);
     while let Some(left) = deadline.checked_duration_since(Instant::now()) {
         match scanner.events.recv_timeout(left) {

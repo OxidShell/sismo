@@ -28,6 +28,14 @@ pub enum ScanEvent {
     Found(Discovered),
     /// No longer announcing; `addr` is its data address.
     Lost(SocketAddr),
+    /// Probes to `target` cannot be sent. Scanning goes on through the other
+    /// targets; `blocked` is the OS refusing the route (macOS without the Local
+    /// Network permission, or a VPN owning the broadcast route).
+    ProbeFailed {
+        target: SocketAddr,
+        reason: String,
+        blocked: bool,
+    },
 }
 
 /// Something that happened on a connection, in arrival order.
@@ -112,14 +120,20 @@ pub fn viewer_key_path() -> PathBuf {
 /// Background LAN scanner; new apps arrive on [`Scanner::events`].
 pub struct Scanner {
     pub events: flume::Receiver<Result<ScanEvent, String>>,
+    /// Ends the scan thread when the scanner is dropped (restart, settings).
+    _stop: tokio::sync::oneshot::Sender<()>,
     _thread: std::thread::JoinHandle<()>,
 }
 
 impl Scanner {
+    /// Probes the LAN broadcast, this machine and each interface, plus
+    /// `targets` asked directly.
+    ///
     /// # Errors
     /// I/O errors creating the runtime or thread.
-    pub fn start(probe_every: Duration) -> std::io::Result<Self> {
+    pub fn start(probe_every: Duration, targets: Vec<SocketAddr>) -> std::io::Result<Self> {
         let (tx, rx) = flume::unbounded();
+        let (stop, mut stopped) = tokio::sync::oneshot::channel::<()>();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -127,8 +141,9 @@ impl Scanner {
             .name("sismo-scan".into())
             .spawn(move || {
                 runtime.block_on(async move {
-                    let config =
-                        DiscoveryConfig::new(DISCOVERY_APP_ID, 0).probe_interval(probe_every);
+                    let config = DiscoveryConfig::new(DISCOVERY_APP_ID, 0)
+                        .probe_interval(probe_every)
+                        .probe_targets(targets);
                     let mut scan = match Discovery::scan_stream::<RawBytes>(config).await {
                         Ok(scan) => scan,
                         Err(error) => {
@@ -137,7 +152,11 @@ impl Scanner {
                         }
                     };
                     loop {
-                        let event = match scan.next_event().await {
+                        let next = tokio::select! {
+                            next = scan.next_event() => next,
+                            _ = &mut stopped => return,
+                        };
+                        let event = match next {
                             Ok(DiscoveryEvent::Found(peer) | DiscoveryEvent::Updated(peer)) => {
                                 let Ok(beacon) = Beacon::decode(&peer.meta.0) else {
                                     continue;
@@ -151,6 +170,13 @@ impl Scanner {
                             Ok(DiscoveryEvent::Lost { data_addr }) => {
                                 Ok(ScanEvent::Lost(data_addr))
                             }
+                            Ok(DiscoveryEvent::ProbeFailed { target, error }) => {
+                                Ok(ScanEvent::ProbeFailed {
+                                    target,
+                                    reason: error.to_string(),
+                                    blocked: error.kind() == std::io::ErrorKind::HostUnreachable,
+                                })
+                            }
                             Ok(_) => continue,
                             Err(error) => Err(error.to_string()),
                         };
@@ -162,6 +188,7 @@ impl Scanner {
             })?;
         Ok(Self {
             events: rx,
+            _stop: stop,
             _thread: thread,
         })
     }

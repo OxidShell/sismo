@@ -92,6 +92,22 @@ pub struct Prefs {
     pub recent_queries: Vec<String>,
     /// Seconds a live timeline shows by default.
     pub live_window_secs: u32,
+    /// Hosts the scanner also asks directly, as typed (`ip` or `ip:port`), for
+    /// networks that drop broadcast.
+    pub discovery_targets: Vec<String>,
+}
+
+/// Parses a discovery target typed by the user: an IP, with or without a
+/// port (the discovery port by default). Names are not resolved, so a typo
+/// never blocks the scanner on DNS.
+#[must_use]
+pub fn parse_discovery_target(text: &str) -> Option<std::net::SocketAddr> {
+    let text = text.trim();
+    text.parse().ok().or_else(|| {
+        text.parse::<std::net::IpAddr>()
+            .ok()
+            .map(|ip| std::net::SocketAddr::new(ip, zudp::DISCOVERY_PORT))
+    })
 }
 
 fn group_code(group: Group) -> u8 {
@@ -122,6 +138,15 @@ impl Prefs {
             .ok()
             .and_then(|bytes| bincode::decode_from_slice::<Self, _>(&bytes, CODEC).ok())
             .map_or_else(Self::default, |(prefs, _)| prefs)
+    }
+
+    /// The discovery targets that parse, for the scanner.
+    #[must_use]
+    pub fn discovery_targets(&self) -> Vec<std::net::SocketAddr> {
+        self.discovery_targets
+            .iter()
+            .filter_map(|t| parse_discovery_target(t))
+            .collect()
     }
 
     /// Writes atomically (temp file + rename); failures are only logged.

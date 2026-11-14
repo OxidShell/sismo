@@ -160,7 +160,7 @@ fn app_card(mut ws: State<Workspace>, app: &Discovered, connected: bool) -> Rect
         ))
 }
 
-fn empty_state(ws: &Workspace) -> Rect {
+fn empty_state(mut state: State<Workspace>, ws: &Workspace) -> Rect {
     let waiting = ws.scan_started.elapsed() < Duration::from_secs(4);
     let steps = [
         ("1", "sessions-step-live-title", "sessions-step-live-body"),
@@ -202,6 +202,22 @@ fn empty_state(ws: &Workspace) -> Rect {
                 theme::ERROR,
             )
         }))
+        .maybe_child(
+            ws.probe_warning
+                .as_ref()
+                .map(super::settings::probe_warning),
+        )
+        .maybe_child(
+            (ws.scan_error.is_some() || ws.probe_warning.is_some()).then(|| {
+                button(
+                    tr!("sessions-network-settings"),
+                    Kind::Secondary,
+                    move |_| {
+                        state.write().settings = Some(super::settings::Section::Network);
+                    },
+                )
+            }),
+        )
         .children(steps.iter().map(|(n, title, body)| {
             rect()
                 .horizontal()
@@ -229,7 +245,7 @@ pub fn sessions_screen(mut ws: State<Workspace>) -> Rect {
     let mut apps = w.discovered.clone();
     apps.sort_by(|a, b| a.beacon.app.cmp(&b.beacon.app).then(a.addr.cmp(&b.addr)));
     let live_list = if apps.is_empty() {
-        empty_state(&w).into_element()
+        empty_state(ws, &w).into_element()
     } else {
         rect()
             .width(Size::fill())
