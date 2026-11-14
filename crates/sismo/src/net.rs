@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{self, BufWriter};
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -11,7 +11,7 @@ use sismo_format::net::{AuthMode, Beacon, DISCOVERY_APP_ID, ToRecorder, ToViewer
 use sismo_format::{Chunk, FORMAT_VERSION, FileWriter};
 use tokio::sync::mpsc;
 use zudp::{Discovery, DiscoveryConfig};
-use zudp::{Keypair, PeerEvent, RawBytes, Zudp, ZudpSender, ZudpSocket};
+use zudp::{Keypair, PeerAddr, PeerEvent, RawBytes, Zudp, ZudpSender, ZudpSocket};
 
 use crate::collector::snapshot_chunk;
 use crate::config::LiveConfig;
@@ -208,17 +208,26 @@ struct Server {
     identity: Identity,
     auth: AuthMode,
     code: String,
-    viewers: HashMap<SocketAddr, Viewer>,
+    viewers: HashMap<PeerAddr, Viewer>,
     attempts: HashMap<IpAddr, Attempts>,
     handle: Handle,
     device: Arc<Mutex<DeviceRecording>>,
     device_dir: PathBuf,
     /// Viewer that started the on-device recording.
-    device_owner: Option<SocketAddr>,
+    device_owner: Option<PeerAddr>,
+}
+
+/// Who wrong pairing codes count against: the IP of a direct viewer, so a new
+/// port does not reset the limit, or the relay of a relayed one.
+fn source_ip(peer: PeerAddr) -> IpAddr {
+    match peer {
+        PeerAddr::Direct(addr) => addr.ip(),
+        PeerAddr::Relayed { relay, .. } => relay.ip(),
+    }
 }
 
 impl Server {
-    async fn send(&self, to: SocketAddr, stream_id: u16, message: &ToViewer) {
+    async fn send(&self, to: PeerAddr, stream_id: u16, message: &ToViewer) {
         let bytes = RawBytes(message.encode().into());
         let _ = self.sender.send_stream(bytes, to, stream_id).await;
     }
@@ -226,7 +235,7 @@ impl Server {
     async fn on_message(
         &mut self,
         socket: &ZudpSocket<RawBytes>,
-        from: SocketAddr,
+        from: PeerAddr,
         message: ToRecorder,
     ) {
         let key = socket.peer_remote_static_key(from);
@@ -304,11 +313,11 @@ impl Server {
         }
     }
 
-    async fn hello(&mut self, from: SocketAddr, key: Option<[u8; 32]>) {
+    async fn hello(&mut self, from: PeerAddr, key: Option<[u8; 32]>) {
         // The same viewer from a new address (restart, new port, roaming):
         // drop the old entry so it stops receiving and does not linger.
         if let Some(key) = key {
-            let stale: Vec<SocketAddr> = self
+            let stale: Vec<PeerAddr> = self
                 .viewers
                 .iter()
                 .filter(|(addr, v)| **addr != from && v.key == Some(key))
@@ -337,7 +346,7 @@ impl Server {
         self.send(from, stream::CONTROL, &welcome).await;
     }
 
-    async fn pair(&mut self, from: SocketAddr, key: Option<[u8; 32]>, code: &str) {
+    async fn pair(&mut self, from: PeerAddr, key: Option<[u8; 32]>, code: &str) {
         let reject = |reason: String| ToViewer::PairRejected { reason };
         // Trust is remembered by key; a viewer without one cannot pair.
         let Some(key) = key else {
@@ -345,7 +354,7 @@ impl Server {
             self.send(from, stream::CONTROL, &reply).await;
             return;
         };
-        let attempts = self.attempts.entry(from.ip()).or_insert(Attempts {
+        let attempts = self.attempts.entry(source_ip(from)).or_insert(Attempts {
             failures: 0,
             locked_until: None,
         });
@@ -358,7 +367,7 @@ impl Server {
             return;
         }
         if code.trim() == self.code {
-            self.attempts.remove(&from.ip());
+            self.attempts.remove(&source_ip(from));
             if let Some(viewer) = self.viewers.get_mut(&from) {
                 viewer.authorized = true;
             }
@@ -371,11 +380,11 @@ impl Server {
         }
     }
 
-    fn authorized(&self, from: SocketAddr) -> bool {
+    fn authorized(&self, from: PeerAddr) -> bool {
         self.viewers.get(&from).is_some_and(|v| v.authorized)
     }
 
-    fn subscribed(&self) -> Vec<SocketAddr> {
+    fn subscribed(&self) -> Vec<PeerAddr> {
         self.viewers
             .iter()
             .filter(|(_, v)| v.subscribed)
@@ -386,7 +395,7 @@ impl Server {
     /// Starts streaming to `from`. The definitions go first (seq 0, always
     /// safe to apply again), then the ring buffer past `since`, so a viewer
     /// reconnecting to the same session only gets what it missed.
-    async fn subscribe(&mut self, from: SocketAddr, history: bool, since: u64) {
+    async fn subscribe(&mut self, from: PeerAddr, history: bool, since: u64) {
         if let Some(snapshot) = snapshot_chunk() {
             let message = ToViewer::Chunk {
                 seq: 0,
@@ -417,13 +426,13 @@ impl Server {
         self.send_crash_reports(from).await;
     }
 
-    async fn send_crash_reports(&self, to: SocketAddr) {
+    async fn send_crash_reports(&self, to: PeerAddr) {
         let reports = self.handle.crash_reports().iter().map(Into::into).collect();
         self.send(to, stream::CONTROL, &ToViewer::CrashReports { reports })
             .await;
     }
 
-    async fn upload_crash_report(&self, to: SocketAddr, name: &str) {
+    async fn upload_crash_report(&self, to: PeerAddr, name: &str) {
         let Some(dir) = self.handle.dump_dir() else {
             return;
         };
@@ -443,7 +452,7 @@ impl Server {
     }
 
     async fn forward(&mut self, seq: u64, chunk: &Chunk) {
-        let targets: Vec<SocketAddr> = self
+        let targets: Vec<PeerAddr> = self
             .viewers
             .iter_mut()
             .filter(|(_, v)| v.subscribed && seq > v.last_seq)
@@ -464,7 +473,7 @@ impl Server {
         }
     }
 
-    fn start_device_recording(&mut self, owner: SocketAddr) {
+    fn start_device_recording(&mut self, owner: PeerAddr) {
         let mut state = lock(&self.device);
         if state.writer.is_some() {
             return;
@@ -487,7 +496,7 @@ impl Server {
         }
     }
 
-    async fn upload_device_recording(&mut self, to: SocketAddr) {
+    async fn upload_device_recording(&mut self, to: PeerAddr) {
         self.handle.flush();
         self.device_owner = None;
         let path = {
@@ -538,7 +547,7 @@ impl Server {
 
     /// Drops a viewer; an on-device recording it started is discarded so a
     /// lost viewer never fills the device's storage.
-    fn forget(&mut self, addr: SocketAddr) {
+    fn forget(&mut self, addr: PeerAddr) {
         self.viewers.remove(&addr);
         if self.device_owner == Some(addr) {
             self.device_owner = None;
@@ -554,7 +563,7 @@ impl Server {
     }
 
     fn expire(&mut self) {
-        let silent: Vec<SocketAddr> = self
+        let silent: Vec<PeerAddr> = self
             .viewers
             .iter()
             .filter(|(_, v)| v.last_seen.is_none_or(|t| t.elapsed() >= VIEWER_TIMEOUT))
