@@ -7,7 +7,7 @@ use istmo::{Runtime, RuntimeConfig, RuntimeInit};
 use istmo_file_picker::{
     DesktopFilePicker, FileFilter, FilePickerClient, FilePickerHost, PickConfig, SaveConfig,
 };
-use istmo_opener::{DesktopOpener, OpenerClient, OpenerHost};
+use istmo_opener::{DesktopOpener, OpenerClient, OpenerHost, SchemePolicy};
 
 /// Starts the istmo runtime with the desktop hosts the viewer uses.
 /// Call once, before the window launches.
@@ -22,7 +22,9 @@ pub fn install() {
     let picker = DesktopFilePicker::new();
     picker.install_release_hook(&runtime);
     runtime.register_host(FilePickerHost::new(picker));
-    runtime.register_host(OpenerHost::new(DesktopOpener));
+    // The viewer only reveals folders; nothing else may leave through it.
+    let opener = DesktopOpener::with_policy(SchemePolicy::only(["file"]));
+    runtime.register_host(OpenerHost::new(opener));
     if let Ok(mut info) = istmo_plugins::system_info::SystemInfoPublisher::install(&runtime) {
         info.tick();
     }
@@ -86,7 +88,7 @@ pub fn reveal(dir: &Path) {
 /// Primary language subtag of the desktop locale (`es`, `en`…).
 #[must_use]
 pub fn system_language() -> Option<String> {
-    istmo_plugins::SystemInfo::acquire()
+    istmo_plugins::SystemInfoClient::acquire()
         .ok()?
         .current_locale()
         .ok()

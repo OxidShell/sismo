@@ -37,12 +37,11 @@ freya-winit = "=0.5.0-rc.13"
 freya-core = "=0.5.0-rc.13"
 freya-engine = "=0.5.0-rc.13"
 freya-i18n = "=0.5.0-rc.13"
-istmo = "0.1.1-alpha.5"
-istmo-core = "0.1.1-alpha.5"
-istmo-file-picker = "0.1.1-alpha.5"
-istmo-opener = "0.1.1-alpha.5"
-istmo-plugins = "0.1.1-alpha.5"
-bincode = { version = "2", features = ["derive", "std"] }
+istmo = "0.1.1-alpha.6"
+istmo-core = "0.1.1-alpha.6"
+istmo-file-picker = "0.1.1-alpha.6"
+istmo-opener = "0.1.1-alpha.6"
+istmo-plugins = "0.1.1-alpha.6"
 hotpath = { version = "0.31", default-features = false }
 
 [workspace.lints.clippy]
@@ -65,16 +64,7 @@ opt-level = 3
 [profile.dev.package.sismo-analysis]
 opt-level = 3
 
-# istmo-plugins 0.1.1-alpha.5 does not compile on Windows or on targets where
-# c_char is unsigned (aarch64); take the fixed commit until alpha.6 ships.
-# Every istmo crate the fix touches comes from the same tree so one istmo-core
-# links.
 [patch.crates-io]
-istmo-core = { git = "https://github.com/SergioRibera/istmo", rev = "cc29d075fbeadee4ece9e9876f83b7ad15598ffc" }
-istmo-macros = { git = "https://github.com/SergioRibera/istmo", rev = "cc29d075fbeadee4ece9e9876f83b7ad15598ffc" }
-istmo-build = { git = "https://github.com/SergioRibera/istmo", rev = "cc29d075fbeadee4ece9e9876f83b7ad15598ffc" }
-istmo-plugins = { git = "https://github.com/SergioRibera/istmo", rev = "cc29d075fbeadee4ece9e9876f83b7ad15598ffc" }
-istmo-plugins-schema = { git = "https://github.com/SergioRibera/istmo", rev = "cc29d075fbeadee4ece9e9876f83b7ad15598ffc" }
 # The hotpath function sink (hotpath-rs/hotpath#825) is merged but not
 # released yet; take the merge commit until the next hotpath release.
 hotpath = { git = "https://github.com/hotpath-rs/hotpath", rev = "573d7c21a87c60053c1b0d07a2b8f39324133772" }

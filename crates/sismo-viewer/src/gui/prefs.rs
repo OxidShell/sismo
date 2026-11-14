@@ -1,10 +1,11 @@
-//! Viewer preferences, stored as one bincode file in the istmo config dir.
+//! Viewer preferences, stored as one file in the istmo config dir, encoded
+//! with the istmo wire codec (byte-compatible with the bincode files older
+//! viewers wrote).
 
 use std::path::PathBuf;
 
 use sismo_analysis::{Group, Groups, Rule};
 
-const CODEC: bincode::config::Configuration = bincode::config::standard();
 const FILE: &str = "viewer.bin";
 const MAX_RECENT: usize = 12;
 const MAX_RECENT_QUERIES: usize = 10;
@@ -136,7 +137,7 @@ impl Prefs {
     pub fn load() -> Self {
         std::fs::read(Self::path())
             .ok()
-            .and_then(|bytes| bincode::decode_from_slice::<Self, _>(&bytes, CODEC).ok())
+            .and_then(|bytes| istmo::codec::decode::<Self>(&bytes).ok())
             .map_or_else(Self::default, |(prefs, _)| prefs)
     }
 
@@ -152,7 +153,7 @@ impl Prefs {
     /// Writes atomically (temp file + rename); failures are only logged.
     pub fn save(&self) {
         let path = Self::path();
-        let Ok(bytes) = bincode::encode_to_vec(self, CODEC) else {
+        let Ok(bytes) = istmo::codec::encode(self) else {
             return;
         };
         let tmp = path.with_extension("tmp");
