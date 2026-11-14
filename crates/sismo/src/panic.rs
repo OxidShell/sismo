@@ -64,10 +64,9 @@ pub(crate) fn install_hook() {
 fn chain_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let location = info
-            .location()
-            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
-            .unwrap_or_default();
+        let location = info.location().map_or_else(String::new, |l| {
+            format!("{}:{}:{}", l.file(), l.line(), l.column())
+        });
         let text = message(info);
         let backtrace = trimmed(&Backtrace::force_capture().to_string());
         record(|w, t| w.panic(t, &text, &location, &backtrace));

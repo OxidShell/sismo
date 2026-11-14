@@ -397,8 +397,7 @@ impl Server {
         let ring = self
             .handle
             .ring()
-            .map(|r| lock(r).history())
-            .unwrap_or_default();
+            .map_or_else(Vec::new, |r| lock(r).history());
         let mut last_seq = ring.last().map_or(0, |(s, _)| *s).max(since);
         if history {
             for (seq, chunk) in ring.into_iter().filter(|(seq, _)| *seq > since) {

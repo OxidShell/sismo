@@ -70,7 +70,7 @@ fn main() {
     std::thread::Builder::new()
         .name("sync".into())
         .spawn(|| {
-            for n in 0.. {
+            for n in 0..=u64::MAX {
                 sync_tick(n);
                 sismo::counter!("demo.queue_len", n % 13);
                 std::thread::sleep(Duration::from_millis(20));

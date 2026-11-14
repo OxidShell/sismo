@@ -121,8 +121,7 @@ impl Prefs {
         std::fs::read(Self::path())
             .ok()
             .and_then(|bytes| bincode::decode_from_slice::<Self, _>(&bytes, CODEC).ok())
-            .map(|(prefs, _)| prefs)
-            .unwrap_or_default()
+            .map_or_else(Self::default, |(prefs, _)| prefs)
     }
 
     /// Writes atomically (temp file + rename); failures are only logged.
@@ -241,13 +240,12 @@ impl Prefs {
         self.groups
             .iter()
             .find(|g| g.app == app)
-            .map(|g| {
+            .map_or_else(Vec::new, |g| {
                 g.rules
                     .iter()
                     .map(|r| (r.pattern.clone(), code_group(r.group)))
                     .collect()
             })
-            .unwrap_or_default()
     }
 
     pub fn remember_pairing(&mut self, app: &str, device: &str, fingerprint: &str) {

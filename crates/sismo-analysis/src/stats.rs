@@ -257,7 +257,7 @@ impl Session {
                     is_async,
                     krate: self.crate_of(callsite).to_owned(),
                     group: self.group_of(callsite),
-                    file: def.map(|d| d.file.clone()).unwrap_or_default(),
+                    file: def.map_or_else(String::new, |d| d.file.clone()),
                     line: def.map_or(0, |d| d.line),
                     calls,
                     total_ns: total,
