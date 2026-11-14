@@ -42,7 +42,8 @@ istmo-core = "0.1.1-alpha.6"
 istmo-file-picker = "0.1.1-alpha.6"
 istmo-opener = "0.1.1-alpha.6"
 istmo-plugins = "0.1.1-alpha.6"
-hotpath = { version = "0.31", default-features = false }
+# 0.31.3 is the first release with the function sink (`hotpath-sink`).
+hotpath = { version = "0.31.3", default-features = false }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
@@ -63,8 +64,3 @@ opt-level = 3
 # opt-level 1 that alone makes the viewer lag in debug builds.
 [profile.dev.package.sismo-analysis]
 opt-level = 3
-
-[patch.crates-io]
-# The hotpath function sink (hotpath-rs/hotpath#825) is merged but not
-# released yet; take the merge commit until the next hotpath release.
-hotpath = { git = "https://github.com/hotpath-rs/hotpath", rev = "573d7c21a87c60053c1b0d07a2b8f39324133772" }
