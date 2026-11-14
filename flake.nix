@@ -65,9 +65,12 @@
           summary = "Timeline, flamegraph, functions and logs for sismo recordings and live apps";
           homepage = "https://github.com/SergioRibera/sismo";
           bundleId = "rs.sergioribera.sismo";
-          minimumSystemVersion = "11.0";
+          macos.minimumSystemVersion = "11.0";
           # Pinned so every future MSI upgrades the previous install.
-          msiUpgradeCode = "F0C2CAD2-BF1F-43D0-8429-08734D9A45AD";
+          windows.upgradeCode = "F0C2CAD2-BF1F-43D0-8429-08734D9A45AD";
+          # Scans from an ephemeral port and connects out, so no ports to open:
+          # this is the macOS prompt (and flatpak/snap network access).
+          permissions.network.local.reason = "Finds and streams from apps running sismo on your network.";
           downloadUrl = "https://github.com/SergioRibera/sismo/releases/download/v${version}";
           desktopEntries = [
             {
